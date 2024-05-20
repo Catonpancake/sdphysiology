@@ -110,6 +110,7 @@ def dataloader(datapath_top: str, scenes: list):
     unity = defaultdict(dict)
     #start time
     zeros = defaultdict(dict)
+    pIDs = defaultdict(dict)
     
     ## Create List for the Space tp Store
     datapath = os.path.join(datapath_top, os.listdir(datapath_top)[0])
@@ -122,6 +123,8 @@ def dataloader(datapath_top: str, scenes: list):
             scene = in_folder.split("_")[0]
             dtype = in_folder.split("_")[1].split(".")[0]
             unity[dtype][scene] = []
+            pIDs[dtype][scene] = []
+            
    
     for folder in os.listdir(datapath_top):        
         datapath = os.path.join(datapath_top, folder)
@@ -132,6 +135,10 @@ def dataloader(datapath_top: str, scenes: list):
             anxiety["Psychopy"].append(log)
             
         #Transform data
+        _allpos = pd.DataFrame()
+        _allrot = pd.DataFrame()
+        _allcus = pd.DataFrame()
+        
         for in_folder in os.listdir(datapath):
             formet = in_folder.split(".")[-1]
             if formet == "xdf":
@@ -140,23 +147,31 @@ def dataloader(datapath_top: str, scenes: list):
             if formet == "csv":
                 scene = in_folder.split("_")[0]
                 dtype = in_folder.split("_")[1].split(".")[0]
+                
                 if dtype == "customevent":
                     _df = pd.read_csv(datapath+'/'+in_folder,
                             engine='python',
                             encoding='utf-8',
                             names = ['ID','Time','Action', 'Actor', '1','2','3','4']
                             ,header = None)   
-                    _df = _df.iloc[1:, :]   
+                    _df = _df.iloc[1:, :] 
+
                 else:
                     _df = pd.read_csv(datapath+'/'+in_folder,
                             engine='python',
                             encoding='utf-8')
                 if dtype == "position":
-                    zeros[scene][dtype] = _df[' Time'][0]
+                    zeros[scene][dtype] = _df[' Time'][0]      
                 _df['Subject'] = folder
-                unity[dtype][scene].append(_df)
 
-    return (names, anxiety, unity)
+    
+                unity[dtype][scene].append(_df)
+ 
+        
+
+                
+
+    return (names, anxiety, unity, pIDs)
 
 #####################Anxiety#############################################
 def Anxiety_preprocessing(anxiety: list, scenes: list):
@@ -209,37 +224,6 @@ def Anxiety_preprocessing(anxiety: list, scenes: list):
     return anxiety_psy
 
 
-def hallwaycheck(subj_custom_in: list):
-    '''
-    실험 참여자가 hallway에 들어간 시간을 체크한다. 만약 여러번 들락날락 거렸다면 맨 마지막 출입으로 시간을 정한다.
-    '''
-    hallway_list = []
-    
-    #remove first name row
-    index_in = 0   #time_zero list index
-    for df_in in subj_custom_in:
-        #remove unnecessary datas
-        hallway_df = df_in.loc[df_in['Name'] == ' Hallwaypass']
-        hallway_df = hallway_df.drop(['ID','X_touch','Y_touch'], axis = 1)    
-        hallway_df.columns  = ['Time', 'Type', 'X_pos', 'Y_pos', 'Z_pos'] # 컬럼명 변경      
-        hallway_df = hallway_df.reset_index().drop('index',axis=1)        
-              
-        for i in range(len(hallway_df)):
-            hallway_df['X_pos'][i] = hallway_df['X_pos'][i].replace('"(','')
-            hallway_df['Z_pos'][i] = hallway_df['Z_pos'][i].replace(')"','')
-   
-        hallway_df = hallway_df.astype({'X_pos':'float'})
-        hallway_df = hallway_df.astype({'Y_pos':'float'})
-        hallway_df = hallway_df.astype({'Z_pos':'float'})
-        hallway_df = hallway_df.tail(n=1)
-        hallway_df = hallway_df.reset_index().drop('index',axis=1) 
-
-        hallway_list.append(hallway_df)
-        
-        index_in = index_in + 1
-    
-    return hallway_list
-
 def zero_to_nan(values):
     """Replace every 0 with 'nan' and return a copy."""
     return [float('nan') if x==0 else x for x in values]
@@ -284,8 +268,8 @@ def playertransform(position_df, rotation_df):
         
 
         #Merge into one df
-        test_pos = pd.merge(left = tmp_player_pos, right = tmp_agent_pos, how='outer', on='Time', suffixes=('_1','_2'))
-        test_rot = pd.merge(left = tmp_player_rot, right = tmp_agent_rot, how='outer', on='Time', suffixes=('_1','_2'))
+        test_pos = pd.merge(left = tmp_player_pos, right = tmp_agent_pos, how='left', on='Time', suffixes=('_1','_2'))
+        test_rot = pd.merge(left = tmp_player_rot, right = tmp_agent_rot, how='left', on='Time', suffixes=('_1','_2'))
  
 
         #비어있는 Subject ID_2 컬럼은 어차피 ID가 들어가므로 그냥 채워준다.
@@ -347,8 +331,8 @@ def getagentvec(playertransform_list):
     for i in range(len(player_list)):
         agentvec_list = list()
         for j in range(len(player_list[i])):
-            agent_vec = np.array([(player_list[i]["X_2_pos"][j]-player_list[1]["X_1_pos"][j]), #x_1 means player. idx can be anything
-                                  (player_list[i]["Z_2_pos"][j]-player_list[1]["Z_1_pos"][j])])
+            agent_vec = np.array([(player_list[i]["X_2_pos"].loc[j]-player_list[i]["X_1_pos"].loc[j]), #x_1 means player. idx can be anything
+                                  (player_list[i]["Z_2_pos"].loc[j]-player_list[i]["Z_1_pos"].loc[j])])
             agentvec_list.append(agent_vec)
         agent_list.append(agentvec_list)
     return agent_list
@@ -618,7 +602,7 @@ def agentcheck(subj_p, subj_r, names, zone_f = 7.6, zone_c = 1.2, visual_degree 
     for name in range(len(names)):
         total = []
         # Player and Agent position data
-        pt = playertransform(subj_p[name], subj_r[name])
+        pt = playertransform(subj_p[name].drop(["Subject"], axis=1), subj_r[name].drop(["Subject"], axis=1))
         #Distance and Degree check between Agent and Player
         
         for a in range(len(pt)): #Remove player df from pt
