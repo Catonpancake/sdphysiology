@@ -13,14 +13,14 @@ from itertools import product
 import pickle
 
 
-def time2frame(timepoint, textformet=True):
+def time2frame(timepoint, textformet=True, frame = 30):
     """coughing data is textformet = True. Text formet: min:sec:sec"""
     if textformet == True:
         minute, second = map(float, timepoint.split(":"))
         total_second = second + minute * 60
     else:
         total_second = timepoint
-    return round(total_second * 30)
+    return round(total_second * frame)
 
 
 def metadata2frame(metadata: dict):
