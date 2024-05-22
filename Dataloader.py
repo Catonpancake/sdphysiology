@@ -155,13 +155,18 @@ def dataloader(datapath_top: str, scenes: list):
                             names = ['ID','Time','Action', 'Actor', '1','2','3','4']
                             ,header = None)   
                     _df = _df.iloc[1:, :] 
+                    
 
                 else:
                     _df = pd.read_csv(datapath+'/'+in_folder,
                             engine='python',
                             encoding='utf-8')
                 if dtype == "position":
-                    zeros[scene][dtype] = _df[' Time'][0]      
+                    zeros[scene][dtype] = _df[' Time'][0] 
+                
+                if (dtype == "position") | (dtype == "rotation"):
+                    _df = _df.rename(columns={" Time": "Time"," X": "X"," Y": "Y"," Z": "Z"})
+                    
                 _df['Subject'] = folder
 
     
@@ -304,59 +309,28 @@ def playertransform(position_df, rotation_df):
 
 
 ###############Visual Field Preprocessing ################################
-def getfrontvec(playertransform_list, idx=0, player=True):
-    '''개체의 정면을 확인함'''
-    if player == True:
-        subj = 1
-    else:
-        subj = 2
-    
-    #player position, rotation value list
-    player_list = playertransform_list.copy()
-    #player front값 넣을 리스트
-    front_list = []
-    frontvec_list = []
-    for i in player_list[idx].index:
-        front_x = 5*math.cos(math.pi * (player_list[idx][f"Y_{subj}_rot"][i] / 180)) #degree to radian. 5 is arbitrary lenth of the vector
-        front_z = 5*math.sin(math.pi * (player_list[idx][f"Y_{subj}_rot"][i] / 180))
-        front_vec = np.array([front_x,front_z])
-        frontvec_list.append(front_vec)
-        
-    return frontvec_list
-
-def getagentvec(playertransform_list):
-    '''Agent의 vector 구하기'''
-    player_list = playertransform_list.copy()
-    agent_list = []
-    for i in range(len(player_list)):
-        agentvec_list = list()
-        for j in range(len(player_list[i])):
-            agent_vec = np.array([(player_list[i]["X_2_pos"].loc[j]-player_list[i]["X_1_pos"].loc[j]), #x_1 means player. idx can be anything
-                                  (player_list[i]["Z_2_pos"].loc[j]-player_list[i]["Z_1_pos"].loc[j])])
-            agentvec_list.append(agent_vec)
-        agent_list.append(agentvec_list)
-    return agent_list
-
-
 def cos_sim(A, B):
     '''Get Cosine value'''
     return dot(A, B)/(norm(A)*norm(B))    
-    
-    
-def degree(playertransform_list):
-    '''Get Degree'''
-    agent_list = getagentvec(playertransform_list)
-    frontvec_list = getfrontvec(playertransform_list)
-    agent_list_degree = list()
-    for i in range(len(agent_list)):
-        degree_list = list()
-        for j in range(len(agent_list[i])):
-            degree = math.degrees(np.arccos(cos_sim(agent_list[i][j],frontvec_list[j])))
-            degree_list.append(degree)
 
-        agent_list_degree.append(degree_list)
-    
-    return agent_list_degree
+def getfrontvec(yr):
+    '''개체의 정면을 확인함'''
+    front_x = 5*np.cos(math.pi * (yr / 180)) #degree to radian. 5 is arbitrary lenth of the vector
+    front_z = 5*np.sin(math.pi * (yr / 180))
+    front_vec = np.array([front_x,front_z])
+
+    return front_vec
+
+def getvector(px, pz, ax, az):
+    '''vector 구하기'''
+    vector = np.array([(ax-px),(az-pz)])
+    return vector
+
+def visualdegree(vector,front_vec):
+    '''Get Visual Degree'''
+    degree = np.degrees(np.arccos(cos_sim(vector,front_vec)))
+    return degree
+
 
 def twovecdegree(v1, v2, radian=False):
     '''
@@ -374,16 +348,12 @@ def twovecdegree(v1, v2, radian=False):
     return angle
 
 #함수 모음
-def distance_uclid(playertransform_list):
-    '''에이전트랑 플레이어랑 거리를 구함'''
-    position_list = playertransform_list.copy()
-    distance_list = list()
-    for i in range(len(position_list)):
-        distance = np.sqrt((position_list[i]['X_1_pos'] - position_list[i]['X_2_pos'])**2 + 
-                           (position_list[i]['Z_1_pos'] - position_list[i]['Z_2_pos'])**2)
-        distance_list.append(distance)
-    return distance_list 
 
+def distance(px, pz, ax, az):
+    '''두 좌표사이 거리를 구함. x,z좌표 기준.'''
+    distance = np.sqrt((px - ax)**2 + 
+                           (pz - az)**2)
+    return distance
 
 def gettangentpoint(Px: float, Pz: float, Ax: float, Az: float, r: float, plot=False, title='tangent'):
     '''
