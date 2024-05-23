@@ -322,7 +322,13 @@ def getfrontvec(yr):
     return front_vec
 
 def getvector(px, pz, ax, az):
-    '''vector 구하기'''
+    '''vector 구하기
+    
+    도착점 - 시작점
+    
+    즉 ax, az 좌표가 도착점, px, pz 좌표가 시작점이다.
+    
+    '''
     vector = np.array([(ax-px),(az-pz)])
     return vector
 
@@ -366,20 +372,24 @@ def gettangentpoint(Px: float, Pz: float, Ax: float, Az: float, r: float, plot=F
     https://stackoverflow.com/questions/49968720/find-tangent-points-in-a-circle-from-a-point
     '''
     #Get tangent point
-    func = sqrt((Ax - Px)**2 + (Az - Pz)**2)  # hypot() also works here
-    th = acos(r / func)  # angle theta
-    direc = atan2(Az - Pz, Ax - Px)  # direction angle of point P from C
-    d1 = direc + th  # direction angle of point T1 from C
-    d2 = direc - th  # direction angle of point T2 from C
+    func = np.sqrt((Ax - Px)**2 + (Az - Pz)**2)  # player와 agent간 거리 구하기
+    cosine = r / func # 밑변이 되는 r값(원의 반지름)과 빗변이 되는 player/agent 간 거리를 나누어 cosine 값을 구한다.
+    cosine.loc[cosine>1] = 1 ## arccos는 -1,1 사이의 값만 받을 수 있는데, 계산상 오류인지 1을 넘는게 나와 clipping 해준다. 원리상 1을 넘을리 없으므로.
+    ## -1의 경우, func 값과 r 값 모두 양수라 굳이 안해줬다.    
+    th = np.arccos(cosine)  # angle theta. cosine 값에 역함수인 arccos를 취해서 세타 값을 얻어낸다. 이것이 agent가 player를 향한다고 한다면 취할 수 있는 최대 각도가 된다.
+    direc = np.arctan2(Az - Pz, Ax - Px)  # direction angle of point A from P 
+    ## 평면 좌표계에서 agent로 부터 player personal space 영역 원에 직교하는 두 점의 위치를 알기 위해, player위치로부터 수평인 선을 밑변으로 하는(빗변은 func)
+    ## 직각 삼각형의 player 쪽 각도이다.
+    d1 = direc + th  # direction angle of point T1 from Player
+    d2 = direc - th  # direction angle of point T2 from Player
+    ### 위 각도를 기반으로 평면 좌표계에서 두 접점의 좌표를 알아낼 수 있다.
+    T1x = Px + r * np.cos(d1)
+    T1z = Pz + r * np.sin(d1)
+    T2x = Px + r * np.cos(d2)
+    T2z = Pz + r * np.sin(d2)
 
-    T1x = Px + r * cos(d1)
-    T1z = Pz + r * sin(d1)
-    T2x = Px + r * cos(d2)
-    T2z = Pz + r * sin(d2)
-
-    T1 = (T1x, T1z)
-    T2 = (T2x, T2z)
-    
+    T1 = np.array([T1x, T1z])
+    T2 = np.array([T2x, T2z])
     #For sanity check. Plotting
     if plot == True:
         #To plot Player circle
@@ -416,10 +426,10 @@ def gettangentpoint(Px: float, Pz: float, Ax: float, Az: float, r: float, plot=F
 def to_dataframe(playertransform_list):
     '''Put time, subjectID, distance, visual degree into one dataframe'''
     df_whole_list = []
-    agent_list = getagentvec(playertransform_list)
+    agent_list = getvector(playertransform_list)
     frontvec_list = getfrontvec(playertransform_list)
-    agent_list_degree = degree(playertransform_list)
-    distance = distance_uclid(playertransform_list)
+    agent_list_degree = visualdegree(playertransform_list)
+    distance = distance(playertransform_list)
     for i in range(len(distance)):
         df_processed = pd.DataFrame({'Time' : playertransform_list[i]['Time'], 
                              'subject_ID' : playertransform_list[i]['SubjectID_2_pos'],
@@ -550,7 +560,13 @@ def anglebetween(v1, v2):
     '''
     Get angle between two angles
     '''
-    angle = np.math.atan2(np.linalg.det([v1,v2]),np.dot(v1,v2))
+    a = np.linalg.det(np.stack([v1,v2],1))
+    b = []
+    for idx in range(len(v1)):
+        b.append(np.dot(v1[idx],v2[idx]))
+        
+    angle = np.arctan2(a,b)
+    
     return np.degrees(angle)
 
 def agentcheck(subj_p, subj_r, names, zone_f = 7.6, zone_c = 1.2, visual_degree = 50):
