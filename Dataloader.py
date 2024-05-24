@@ -224,6 +224,7 @@ def Anxiety_preprocessing(anxiety: list, scenes: list):
             
         anxiety_df = anxiety_df.drop(["video","type"], axis=1)
         anxiety_df["Subject"] = name
+        anxiety_df[["Time", "marker"]] = anxiety_df[["Time", "marker"]].astype("float64")
         anxiety_psy.append(anxiety_df)
 
     return anxiety_psy
@@ -595,8 +596,8 @@ def agentcheck(subj_p, subj_r, names, zone_f = 7.6, zone_c = 1.2, visual_degree 
             if pt[a]['SubjectID_1_pos'][0] == pt[a]['SubjectID_2_pos'][0]:
                 del pt[a]
         
-        dist = distance_uclid(pt)
-        deg = degree(pt)
+        dist = distance(pt)
+        deg = visualdegree(pt)
 
         for a in range(len(pt)):
             intentions = [] #Contain each intention label of agent by time
