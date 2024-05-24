@@ -561,14 +561,13 @@ def anglebetween(v1, v2):
     '''
     Get angle between two angles
     '''
-    a = np.linalg.det(np.stack([v1,v2],1))
-    b = []
-    for idx in range(len(v1)):
-        b.append(np.dot(v1[idx],v2[idx]))
-        
-    angle = np.arctan2(a,b)
+    unit_vector_1 = v1.T / np.linalg.norm(v1, axis=1)  ## u/|u|
+    unit_vector_2 = v2.T / np.linalg.norm(v2, axis=1)  ## v/|v|
+    cos = np.einsum("ij,ij->i", unit_vector_1.T, unit_vector_2.T) ## u*v/|u|*|v| = cos() by cosine제 2법칙
     
-    return np.degrees(angle)
+    angle = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+    
+    return angle
 
 def agentcheck(subj_p, subj_r, names, zone_f = 7.6, zone_c = 1.2, visual_degree = 50):
     '''
