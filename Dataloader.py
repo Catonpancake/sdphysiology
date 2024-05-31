@@ -110,6 +110,7 @@ def dataloader(datapath_top: str, scenes: list):
     unity = defaultdict(dict)
     #start time
     zeros = defaultdict(dict)
+    pIDs = defaultdict(dict)
     
     ## Create List for the Space tp Store
     datapath = os.path.join(datapath_top, os.listdir(datapath_top)[0])
@@ -122,6 +123,8 @@ def dataloader(datapath_top: str, scenes: list):
             scene = in_folder.split("_")[0]
             dtype = in_folder.split("_")[1].split(".")[0]
             unity[dtype][scene] = []
+            pIDs[dtype][scene] = []
+            
    
     for folder in os.listdir(datapath_top):        
         datapath = os.path.join(datapath_top, folder)
@@ -132,6 +135,10 @@ def dataloader(datapath_top: str, scenes: list):
             anxiety["Psychopy"].append(log)
             
         #Transform data
+        _allpos = pd.DataFrame()
+        _allrot = pd.DataFrame()
+        _allcus = pd.DataFrame()
+        
         for in_folder in os.listdir(datapath):
             formet = in_folder.split(".")[-1]
             if formet == "xdf":
@@ -140,21 +147,34 @@ def dataloader(datapath_top: str, scenes: list):
             if formet == "csv":
                 scene = in_folder.split("_")[0]
                 dtype = in_folder.split("_")[1].split(".")[0]
+                
                 if dtype == "customevent":
                     _df = pd.read_csv(datapath+'/'+in_folder,
                             engine='python',
                             encoding='utf-8',
                             names = ['ID','Time','Action', 'Actor', '1','2','3','4']
                             ,header = None)   
-                    _df = _df.iloc[1:, :]   
+                    _df = _df.iloc[1:, :] 
+                    
+
                 else:
                     _df = pd.read_csv(datapath+'/'+in_folder,
                             engine='python',
                             encoding='utf-8')
                 if dtype == "position":
-                    zeros[scene][dtype] = _df[' Time'][0]
+                    zeros[scene][dtype] = _df[' Time'][0] 
+                
+                if (dtype == "position") | (dtype == "rotation"):
+                    _df = _df.rename(columns={" Time": "Time"," X": "X"," Y": "Y"," Z": "Z"})
+                    
                 _df['Subject'] = folder
+
+    
                 unity[dtype][scene].append(_df)
+ 
+        
+
+                
 
     return (names, anxiety, unity)
 
@@ -204,41 +224,11 @@ def Anxiety_preprocessing(anxiety: list, scenes: list):
             
         anxiety_df = anxiety_df.drop(["video","type"], axis=1)
         anxiety_df["Subject"] = name
+        anxiety_df[["Time", "marker"]] = anxiety_df[["Time", "marker"]].astype("float64")
         anxiety_psy.append(anxiety_df)
 
     return anxiety_psy
 
-
-def hallwaycheck(subj_custom_in: list):
-    '''
-    실험 참여자가 hallway에 들어간 시간을 체크한다. 만약 여러번 들락날락 거렸다면 맨 마지막 출입으로 시간을 정한다.
-    '''
-    hallway_list = []
-    
-    #remove first name row
-    index_in = 0   #time_zero list index
-    for df_in in subj_custom_in:
-        #remove unnecessary datas
-        hallway_df = df_in.loc[df_in['Name'] == ' Hallwaypass']
-        hallway_df = hallway_df.drop(['ID','X_touch','Y_touch'], axis = 1)    
-        hallway_df.columns  = ['Time', 'Type', 'X_pos', 'Y_pos', 'Z_pos'] # 컬럼명 변경      
-        hallway_df = hallway_df.reset_index().drop('index',axis=1)        
-              
-        for i in range(len(hallway_df)):
-            hallway_df['X_pos'][i] = hallway_df['X_pos'][i].replace('"(','')
-            hallway_df['Z_pos'][i] = hallway_df['Z_pos'][i].replace(')"','')
-   
-        hallway_df = hallway_df.astype({'X_pos':'float'})
-        hallway_df = hallway_df.astype({'Y_pos':'float'})
-        hallway_df = hallway_df.astype({'Z_pos':'float'})
-        hallway_df = hallway_df.tail(n=1)
-        hallway_df = hallway_df.reset_index().drop('index',axis=1) 
-
-        hallway_list.append(hallway_df)
-        
-        index_in = index_in + 1
-    
-    return hallway_list
 
 def zero_to_nan(values):
     """Replace every 0 with 'nan' and return a copy."""
@@ -284,8 +274,8 @@ def playertransform(position_df, rotation_df):
         
 
         #Merge into one df
-        test_pos = pd.merge(left = tmp_player_pos, right = tmp_agent_pos, how='outer', on='Time', suffixes=('_1','_2'))
-        test_rot = pd.merge(left = tmp_player_rot, right = tmp_agent_rot, how='outer', on='Time', suffixes=('_1','_2'))
+        test_pos = pd.merge(left = tmp_player_pos, right = tmp_agent_pos, how='left', on='Time', suffixes=('_1','_2'))
+        test_rot = pd.merge(left = tmp_player_rot, right = tmp_agent_rot, how='left', on='Time', suffixes=('_1','_2'))
  
 
         #비어있는 Subject ID_2 컬럼은 어차피 ID가 들어가므로 그냥 채워준다.
@@ -320,59 +310,34 @@ def playertransform(position_df, rotation_df):
 
 
 ###############Visual Field Preprocessing ################################
-def getfrontvec(playertransform_list, idx=0, player=True):
-    '''개체의 정면을 확인함'''
-    if player == True:
-        subj = 1
-    else:
-        subj = 2
-    
-    #player position, rotation value list
-    player_list = playertransform_list.copy()
-    #player front값 넣을 리스트
-    front_list = []
-    frontvec_list = []
-    for i in player_list[idx].index:
-        front_x = 5*math.cos(math.pi * (player_list[idx][f"Y_{subj}_rot"][i] / 180)) #degree to radian. 5 is arbitrary lenth of the vector
-        front_z = 5*math.sin(math.pi * (player_list[idx][f"Y_{subj}_rot"][i] / 180))
-        front_vec = np.array([front_x,front_z])
-        frontvec_list.append(front_vec)
-        
-    return frontvec_list
-
-def getagentvec(playertransform_list):
-    '''Agent의 vector 구하기'''
-    player_list = playertransform_list.copy()
-    agent_list = []
-    for i in range(len(player_list)):
-        agentvec_list = list()
-        for j in range(len(player_list[i])):
-            agent_vec = np.array([(player_list[i]["X_2_pos"][j]-player_list[1]["X_1_pos"][j]), #x_1 means player. idx can be anything
-                                  (player_list[i]["Z_2_pos"][j]-player_list[1]["Z_1_pos"][j])])
-            agentvec_list.append(agent_vec)
-        agent_list.append(agentvec_list)
-    return agent_list
-
-
 def cos_sim(A, B):
     '''Get Cosine value'''
     return dot(A, B)/(norm(A)*norm(B))    
-    
-    
-def degree(playertransform_list):
-    '''Get Degree'''
-    agent_list = getagentvec(playertransform_list)
-    frontvec_list = getfrontvec(playertransform_list)
-    agent_list_degree = list()
-    for i in range(len(agent_list)):
-        degree_list = list()
-        for j in range(len(agent_list[i])):
-            degree = math.degrees(np.arccos(cos_sim(agent_list[i][j],frontvec_list[j])))
-            degree_list.append(degree)
 
-        agent_list_degree.append(degree_list)
+def getfrontvec(yr):
+    '''개체의 정면을 확인함'''
+    front_x = 5*np.cos(math.pi * (yr / 180)) #degree to radian. 5 is arbitrary lenth of the vector
+    front_z = 5*np.sin(math.pi * (yr / 180))
+    front_vec = np.array([front_x,front_z])
+
+    return front_vec
+
+def getvector(px, pz, ax, az):
+    '''vector 구하기
     
-    return agent_list_degree
+    도착점 - 시작점
+    
+    즉 ax, az 좌표가 도착점, px, pz 좌표가 시작점이다.
+    
+    '''
+    vector = np.array([(ax-px),(az-pz)])
+    return vector
+
+def visualdegree(vector,front_vec):
+    '''Get Visual Degree'''
+    degree = np.degrees(np.arccos(cos_sim(vector,front_vec)))
+    return degree
+
 
 def twovecdegree(v1, v2, radian=False):
     '''
@@ -390,16 +355,12 @@ def twovecdegree(v1, v2, radian=False):
     return angle
 
 #함수 모음
-def distance_uclid(playertransform_list):
-    '''에이전트랑 플레이어랑 거리를 구함'''
-    position_list = playertransform_list.copy()
-    distance_list = list()
-    for i in range(len(position_list)):
-        distance = np.sqrt((position_list[i]['X_1_pos'] - position_list[i]['X_2_pos'])**2 + 
-                           (position_list[i]['Z_1_pos'] - position_list[i]['Z_2_pos'])**2)
-        distance_list.append(distance)
-    return distance_list 
 
+def distance(px, pz, ax, az):
+    '''두 좌표사이 거리를 구함. x,z좌표 기준.'''
+    distance = np.sqrt((px - ax)**2 + 
+                           (pz - az)**2)
+    return distance
 
 def gettangentpoint(Px: float, Pz: float, Ax: float, Az: float, r: float, plot=False, title='tangent'):
     '''
@@ -412,20 +373,24 @@ def gettangentpoint(Px: float, Pz: float, Ax: float, Az: float, r: float, plot=F
     https://stackoverflow.com/questions/49968720/find-tangent-points-in-a-circle-from-a-point
     '''
     #Get tangent point
-    func = sqrt((Ax - Px)**2 + (Az - Pz)**2)  # hypot() also works here
-    th = acos(r / func)  # angle theta
-    direc = atan2(Az - Pz, Ax - Px)  # direction angle of point P from C
-    d1 = direc + th  # direction angle of point T1 from C
-    d2 = direc - th  # direction angle of point T2 from C
+    func = np.sqrt((Ax - Px)**2 + (Az - Pz)**2)  # player와 agent간 거리 구하기
+    cosine = r / func # 밑변이 되는 r값(원의 반지름)과 빗변이 되는 player/agent 간 거리를 나누어 cosine 값을 구한다.
+    cosine.loc[cosine>1] = 1 ## arccos는 -1,1 사이의 값만 받을 수 있는데, 계산상 오류인지 1을 넘는게 나와 clipping 해준다. 원리상 1을 넘을리 없으므로.
+    ## -1의 경우, func 값과 r 값 모두 양수라 굳이 안해줬다.    
+    th = np.arccos(cosine)  # angle theta. cosine 값에 역함수인 arccos를 취해서 세타 값을 얻어낸다. 이것이 agent가 player를 향한다고 한다면 취할 수 있는 최대 각도가 된다.
+    direc = np.arctan2(Az - Pz, Ax - Px)  # direction angle of point A from P 
+    ## 평면 좌표계에서 agent로 부터 player personal space 영역 원에 직교하는 두 점의 위치를 알기 위해, player위치로부터 수평인 선을 밑변으로 하는(빗변은 func)
+    ## 직각 삼각형의 player 쪽 각도이다.
+    d1 = direc + th  # direction angle of point T1 from Player
+    d2 = direc - th  # direction angle of point T2 from Player
+    ### 위 각도를 기반으로 평면 좌표계에서 두 접점의 좌표를 알아낼 수 있다.
+    T1x = Px + r * np.cos(d1)
+    T1z = Pz + r * np.sin(d1)
+    T2x = Px + r * np.cos(d2)
+    T2z = Pz + r * np.sin(d2)
 
-    T1x = Px + r * cos(d1)
-    T1z = Pz + r * sin(d1)
-    T2x = Px + r * cos(d2)
-    T2z = Pz + r * sin(d2)
-
-    T1 = (T1x, T1z)
-    T2 = (T2x, T2z)
-    
+    T1 = np.array([T1x, T1z])
+    T2 = np.array([T2x, T2z])
     #For sanity check. Plotting
     if plot == True:
         #To plot Player circle
@@ -462,10 +427,10 @@ def gettangentpoint(Px: float, Pz: float, Ax: float, Az: float, r: float, plot=F
 def to_dataframe(playertransform_list):
     '''Put time, subjectID, distance, visual degree into one dataframe'''
     df_whole_list = []
-    agent_list = getagentvec(playertransform_list)
+    agent_list = getvector(playertransform_list)
     frontvec_list = getfrontvec(playertransform_list)
-    agent_list_degree = degree(playertransform_list)
-    distance = distance_uclid(playertransform_list)
+    agent_list_degree = visualdegree(playertransform_list)
+    distance = distance(playertransform_list)
     for i in range(len(distance)):
         df_processed = pd.DataFrame({'Time' : playertransform_list[i]['Time'], 
                              'subject_ID' : playertransform_list[i]['SubjectID_2_pos'],
@@ -596,8 +561,13 @@ def anglebetween(v1, v2):
     '''
     Get angle between two angles
     '''
-    angle = np.math.atan2(np.linalg.det([v1,v2]),np.dot(v1,v2))
-    return np.degrees(angle)
+    unit_vector_1 = v1.T / np.linalg.norm(v1, axis=1)  ## u/|u|
+    unit_vector_2 = v2.T / np.linalg.norm(v2, axis=1)  ## v/|v|
+    cos = np.einsum("ij,ij->i", unit_vector_1.T, unit_vector_2.T) ## u*v/|u|*|v| = cos() by cosine제 2법칙
+    
+    angle = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+    
+    return angle
 
 def agentcheck(subj_p, subj_r, names, zone_f = 7.6, zone_c = 1.2, visual_degree = 50):
     '''
@@ -618,15 +588,15 @@ def agentcheck(subj_p, subj_r, names, zone_f = 7.6, zone_c = 1.2, visual_degree 
     for name in range(len(names)):
         total = []
         # Player and Agent position data
-        pt = playertransform(subj_p[name], subj_r[name])
+        pt = playertransform(subj_p[name].drop(["Subject"], axis=1), subj_r[name].drop(["Subject"], axis=1))
         #Distance and Degree check between Agent and Player
         
         for a in range(len(pt)): #Remove player df from pt
             if pt[a]['SubjectID_1_pos'][0] == pt[a]['SubjectID_2_pos'][0]:
                 del pt[a]
         
-        dist = distance_uclid(pt)
-        deg = degree(pt)
+        dist = distance(pt)
+        deg = visualdegree(pt)
 
         for a in range(len(pt)):
             intentions = [] #Contain each intention label of agent by time
