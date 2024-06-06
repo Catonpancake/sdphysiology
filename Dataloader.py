@@ -225,6 +225,7 @@ def Anxiety_preprocessing(anxiety: list, scenes: list):
         anxiety_df = anxiety_df.drop(["video","type"], axis=1)
         anxiety_df["Subject"] = name
         anxiety_df[["Time", "marker"]] = anxiety_df[["Time", "marker"]].astype("float64")
+        anxiety_df["marker"] = np.clip(anxiety_df["marker"],1,5)
         anxiety_psy.append(anxiety_df)
 
     return anxiety_psy
