@@ -12,6 +12,12 @@ sns.set_theme()
 from itertools import product
 import pickle
 
+def createDir(directory):
+    try:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+    except OSError:
+        print("Error: Failed to create the directory.")
 
 def time2frame(timepoint, textformet=True, frame = 30):
     """coughing data is textformet = True. Text formet: min:sec:sec"""
