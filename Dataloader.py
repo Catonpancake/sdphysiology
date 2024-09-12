@@ -444,7 +444,7 @@ def to_dataframe(playertransform_list):
     return df_whole_list
 
 
-def checkinvisual(playertransform_list, distance=2):
+def checkinvisual(playertransform_list, distance=2, visualdegree=55):
     '''Check whether the agent is currently in visual field or not'''
     df_whole = to_dataframe(playertransform_list)
     df_insight = pd.DataFrame({'Time' : playertransform_list[0]['Time']})
@@ -455,13 +455,13 @@ def checkinvisual(playertransform_list, distance=2):
     for i in range(len(df_whole)):
         df_whole[i]['insight'] = 0
         for j in range(len(df_whole[i])):
-            if df_whole[i]['distance'][j] <= distance and  df_whole[i]['visual_degree'][j] <= 55:
+            if df_whole[i]['distance'][j] <= distance and  df_whole[i]['visual_degree'][j] <= visualdegree:
                 df_whole[i]['insight'][j] += 1
                 df_insight['insight'][j] += 1
 
     return df_insight
 
-def personalspace(playertransform_list, insight = True):
+def personalspace(playertransform_list, insight = True, visualdegree=55):
     '''Check whether the agent is currently in visual field or not'''
     df_whole = to_dataframe(playertransform_list)
     df_bubble = pd.DataFrame({'Time' : playertransform_list[0]['Time']})
@@ -478,13 +478,13 @@ def personalspace(playertransform_list, insight = True):
     for i in range(len(df_whole)):
         for j in range(len(df_whole[i])):
             if insight == True:
-                if df_whole[i]['distance'][j] <= intimate and  df_whole[i]['visual_degree'][j] <= 55:
+                if df_whole[i]['distance'][j] <= intimate and  df_whole[i]['visual_degree'][j] <= visualdegree:
                     df_bubble['intimate space'][j] += 1
-                elif df_whole[i]['distance'][j] <= personal and  df_whole[i]['visual_degree'][j] <= 55:
+                elif df_whole[i]['distance'][j] <= personal and  df_whole[i]['visual_degree'][j] <= visualdegree:
                     df_bubble['personal space'][j] += 1
-                elif df_whole[i]['distance'][j] <= social and  df_whole[i]['visual_degree'][j] <= 55:
+                elif df_whole[i]['distance'][j] <= social and  df_whole[i]['visual_degree'][j] <= visualdegree:
                     df_bubble['social space'][j] += 1
-                elif df_whole[i]['distance'][j] <= public and  df_whole[i]['visual_degree'][j] <= 55:
+                elif df_whole[i]['distance'][j] <= public and  df_whole[i]['visual_degree'][j] <= visualdegree:
                     df_bubble['public space'][j] += 1
             if insight == False:
                 if df_whole[i]['distance'][j] <= intimate:
@@ -499,7 +499,7 @@ def personalspace(playertransform_list, insight = True):
     #df_insight = df_insight.set_index('Time', drop=True)
     return df_bubble
 
-def closestagentdistance(playertransform_list, insight = True):
+def closestagentdistance(playertransform_list, insight = True, visualdegree=55):
     '''Get distance between player and closest agent. if insight = True, only insight agent is checked'''
     df_whole_list = to_dataframe(playertransform_list)
     df_closestdist = pd.DataFrame({'Time' : playertransform_list[0]['Time']})
@@ -510,7 +510,7 @@ def closestagentdistance(playertransform_list, insight = True):
         df_insightonly = df_whole_list.copy()
         for agent in range(len(df_insightonly)):
             for index in range(len(df_insightonly[agent])):
-                if df_insightonly[agent]['visual_degree'][index] > 55:
+                if df_insightonly[agent]['visual_degree'][index] > visualdegree:
                     df_insightonly[agent]['distance'][index] = 99999999
         for index in range(len(df_insightonly)):
             distance_col = df_insightonly[index]['distance']
