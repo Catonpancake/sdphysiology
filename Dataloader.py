@@ -177,6 +177,108 @@ def dataloader(datapath_top: str, scenes: list):
                 
 
     return (names, anxiety, unity)
+###################.acq 파일 마커와 같이 전처리 #################
+import os
+from collections import Counter
+import numpy as np
+import pandas as pd
+from neurokit2.signal import signal_resample
+
+
+def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_method="interpolation", impute_missing=True):
+    """
+    Read and format a BIOPAC's AcqKnowledge file into a pandas' dataframe, including event markers.
+
+    Parameters
+    ----------
+    filename : str
+        Filename (with or without the extension) of a BIOPAC's AcqKnowledge file (e.g., "data.acq").
+    sampling_rate : int or "max"
+        Desired sampling rate in Hz. "max" uses the maximum recorded sampling rate.
+    resample_method : str
+        Method of resampling.
+    impute_missing : bool
+        Whether to impute missing values in the signal.
+
+    Returns
+    ----------
+    df : DataFrame
+        The AcqKnowledge file as a pandas dataframe.
+    event_markers : DataFrame
+        Event markers with columns ['Time (s)', 'Channel', 'Type', 'Text'].
+    sampling_rate : int
+        Sampling rate used in the data.
+
+    """
+    try:
+        import bioread
+    except ImportError:
+        raise ImportError("Please install the 'bioread' module (`pip install bioread`).")
+
+    # Check filename
+    if not filename.endswith(".acq"):
+        filename += ".acq"
+
+    if not os.path.exists(filename):
+        raise ValueError(f"File not found: {filename}")
+
+    # Read the AcqKnowledge file
+    file = bioread.read_file(filename)
+
+    # Determine sampling rate
+    if sampling_rate == "max":
+        sampling_rate = max(channel.samples_per_second for channel in file.channels)
+
+    # Process data channels
+    data = {}
+    channel_counter = Counter()
+    for channel in file.channels:
+        signal = np.array(channel.data)
+
+        # Handle missing data
+        if impute_missing and np.isnan(signal).any():
+            signal = pd.Series(signal).fillna(method="pad").values
+
+        # Resample signal
+        if channel.samples_per_second != sampling_rate:
+            signal = signal_resample(
+                signal,
+                sampling_rate=channel.samples_per_second,
+                desired_sampling_rate=sampling_rate,
+                method=resample_method,
+            )
+
+        # Handle duplicate channel names
+        channel_name = channel.name
+        if channel_counter[channel_name] > 0:
+            channel_name = f"{channel_name} ({channel_counter[channel_name]})"
+        data[channel_name] = signal
+        channel_counter[channel.name] += 1
+
+    # Align signal lengths
+    max_length = max(len(signal) for signal in data.values())
+    for channel_name, signal in data.items():
+        if len(signal) < max_length:
+            data[channel_name] = np.pad(signal, (0, max_length - len(signal)), mode="edge")
+
+    # Create DataFrame for signal data
+    df = pd.DataFrame(data)
+
+    # Extract event markers
+    event_markers = []
+    for marker in file.event_markers:
+        event_markers.append({
+            "Time (s)": marker.sample_index / sampling_rate,
+            "Channel": marker.channel_name,
+            "Type": marker.type,
+            "Text": marker.text
+        })
+    event_markers_df = pd.DataFrame(event_markers)
+
+    return df, event_markers_df, sampling_rate
+
+
+
 
 #####################Anxiety#############################################
 def Anxiety_preprocessing(anxiety: list, scenes: list):
