@@ -185,6 +185,13 @@ import pandas as pd
 from neurokit2.signal import signal_resample
 
 
+import os
+from collections import Counter
+import numpy as np
+import pandas as pd
+from neurokit2.signal import signal_resample
+
+
 def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_method="interpolation", impute_missing=True):
     """
     Read and format a BIOPAC's AcqKnowledge file into a pandas' dataframe, including event markers.
@@ -274,8 +281,26 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
             "Text": marker.text
         })
     event_markers_df = pd.DataFrame(event_markers)
+    event_markers_df['Sample'] = event_markers_df['Time (s)']*2000
+    event_markers_df[['scene', 'marker']] = event_markers_df['Text'].str.split(',', n=2, expand=True)[[0, 1]]
+    event_markers_df = event_markers_df[event_markers_df['Type'] != 'Append']
+    event_markers_df.drop(columns=['Text','Channel','Type','Time (s)'], inplace=True)
+    event_markers_df['scene'] = pd.to_numeric(event_markers_df['scene'])
+    event_markers_df['Sample'] = event_markers_df['Sample'].apply(np.int64)
+    event_markers_df.set_index('Sample', inplace=True)
+    result = pd.concat([df, event_markers_df], axis=1)
+    for i in range(1,8):
+        startidx = result[(result['scene']==i)&(result['marker']=="Start")].index[0]
+        startpidx = result[(result['scene']==i)&(result['marker']=="StartP")].index[0]
+        endidx = result[(result['scene']==i)&(result['marker']=="End")].index[0]
+        result.loc[startidx:endidx, 'scene'] = i
+        result.loc[startidx:startpidx, 'marker'] = "Preparing"
+        result.loc[startpidx:endidx, 'marker'] = "Ongoing"
+    result.dropna(inplace=True)
+    ############ Time에 sampling_rate 곱해서 frame 단위로 바꾸고, Time 기본은 남겨두고 frame을 index로 할 것.
 
-    return df, event_markers_df, sampling_rate
+    return df, event_markers_df, sampling_rate, result
+
 
 
 
