@@ -1,0 +1,15 @@
+﻿dir,vidnum,dir_raw,slider.response_raw,slider.rt_raw,thisN_raw,thisRepN_raw,thisTrialN_raw,vidnum_raw
+C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\03_Elevator1.mp4,03_Elevator1,C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\03_Elevator1.mp4,nan,nan,0,0,0,03_Elevator1
+C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\04_Outside.mp4,04_Outside,C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\04_Outside.mp4,1.006172839506173,46.48382429999947,1,0,1,04_Outside
+C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\05_Hallway.mp4,05_Hallway,C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\05_Hallway.mp4,nan,nan,2,0,2,05_Hallway
+C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\06_Elevator2.mp4,06_Elevator2,C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\06_Elevator2.mp4,nan,nan,3,0,3,06_Elevator2
+C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\07_Hall.mp4,07_Hall,C:\\Users\\cogsys_vr\\OneDrive\\HubRoom\\Projects\\SD physiology\\Experiment\\SDPhysiology\\Captures\\07_Hall.mp4,0.0,2.3746548999997685,4,0,4,07_Hall
+
+extraInfo
+participant,sangsu
+session,001
+date,2024-11-25_17h52.06.412
+expName,SDPhysiology_VideoSurvey
+psychopyVersion,2024.2.4
+frameRate,60.01165426336088
+expStart,2024-11-25 17h52.16.643594 +0900
