@@ -92,6 +92,17 @@ def xdfreaderfixer(directory: str, infodir: str = "ShimmerData.csv"):
     
     return testdata
 
+def rename_duplicates(columns):
+    seen = {}
+    new_columns = []
+    for col in columns:
+        if col in seen:
+            seen[col] += 1
+            new_columns.append(f"{col}_{seen[col]}")
+        else:
+            seen[col] = 0
+            new_columns.append(f"{col}")
+    return new_columns
 
 def dataloader(datapath_top: str, scenes: list):
     '''
@@ -103,9 +114,16 @@ def dataloader(datapath_top: str, scenes: list):
     #Data loader: Position and rotation data, anxiety data.
     #folder name
     names = []
-    #Anxiety data psychopy
-    anxiety = {}
-    anxiety["Psychopy"] = []
+    #Anxiety data psychopy room
+    data = {}
+    data["Psychopy"] = []
+    #Physiology data room
+    data["Physiology"] = []
+    data["Tracker"] = []
+    data["Eyetracker"] = []
+    data["Facetracker"] = []
+    
+    
     #Transform data
     unity = defaultdict(dict)
     #start time
@@ -116,9 +134,9 @@ def dataloader(datapath_top: str, scenes: list):
     datapath = os.path.join(datapath_top, os.listdir(datapath_top)[0])
     for in_folder in os.listdir(datapath):
         formet = in_folder.split(".")[-1]
-        if formet == "xdf":
-            dtype = in_folder.split("_")[-1].split(".")[0]
-            anxiety[dtype] = []
+        # if formet == "xdf":
+        #     dtype = in_folder.split("_")[-1].split(".")[0]
+        #     data[dtype] = []
         if formet == "csv":
             scene = in_folder.split("_")[0]
             dtype = in_folder.split("_")[1].split(".")[0]
@@ -132,7 +150,7 @@ def dataloader(datapath_top: str, scenes: list):
         print(folder)
         #anxiety data
         for log in glob(datapath+ '/*.log'):
-            anxiety["Psychopy"].append(log)
+            data["Psychopy"].append(log)
             
         #Transform data
         _allpos = pd.DataFrame()
@@ -141,9 +159,14 @@ def dataloader(datapath_top: str, scenes: list):
         
         for in_folder in os.listdir(datapath):
             formet = in_folder.split(".")[-1]
-            if formet == "xdf":
+            if formet == "acq":
                 dtype = in_folder.split("_")[-1].split(".")[0]
-                anxiety[dtype].append(xdfreaderfixer(os.path.join(datapath, in_folder)))
+                if dtype == "VR":
+                    _,_,_,result = read_acqknowledge_with_markers(os.path.join(datapath, in_folder))
+                    data["Physiology"].append(result)
+            if formet == "xdf":
+                dtype = "Tracker"
+                data[dtype].append(xdfreaderfixer(os.path.join(datapath, in_folder)))
             if formet == "csv":
                 scene = in_folder.split("_")[0]
                 dtype = in_folder.split("_")[1].split(".")[0]
@@ -173,10 +196,23 @@ def dataloader(datapath_top: str, scenes: list):
                 unity[dtype][scene].append(_df)
  
         
+    df = data['Tracker'][0][0]
+    # Now split the dataframe
+    mandatory_columns = ['Scene', 'Unitytime']
+    df.columns = rename_duplicates(list(df.columns))
+    # Identify "unit" columns
+    unit_columns = [col for col in df.columns if 'unit' in col]
+    # First dataframe: mandatory columns + "unit" columns
+    facetracker= df[mandatory_columns + unit_columns]
+    # Second dataframe: mandatory columns + all other columns not in df1
+    other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
+    eyetracker = df[mandatory_columns + other_columns]
+    data["Eyetracker"].append(eyetracker)
+    data["Facetracker"].append(facetracker)
 
                 
 
-    return (names, anxiety, unity)
+    return (names, data, unity)
 ###################.acq 파일 마커와 같이 전처리 #################
 import os
 from collections import Counter
