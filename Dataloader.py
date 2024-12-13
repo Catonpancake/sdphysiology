@@ -207,6 +207,26 @@ def dataloader(datapath_top: str, scenes: list):
     # Second dataframe: mandatory columns + all other columns not in df1
     other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
     eyetracker = df[mandatory_columns + other_columns]
+    
+    mapping = {
+    0: "Start",
+    1: "Practice",
+    2: "ElevatorTest",
+    3: "Elevator1",
+    4: "Outside",
+    5: "Hallway",
+    6: "Elevator2",
+    7: "Hall",
+    8: "End"
+}
+
+    # Replace values in the column
+    eyetracker['Scene'] = eyetracker['Scene'].map(mapping)
+    facetracker['Scene'] = facetracker['Scene'].map(mapping)
+    eyetracker.rename(columns={"Scene": "scene"}, inplace=True)
+    facetracker.rename(columns={"Scene": "scene"}, inplace=True)
+    
+    
     data["Eyetracker"].append(eyetracker)
     data["Facetracker"].append(facetracker)
 
@@ -333,6 +353,21 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
         result.loc[startidx:startpidx, 'marker'] = "Preparing"
         result.loc[startpidx:endidx, 'marker'] = "Ongoing"
     result.dropna(inplace=True)
+    
+    
+    mapping = {
+    1: "Practice",
+    2: "ElevatorTest",
+    3: "Elevator1",
+    4: "Outside",
+    5: "Hallway",
+    6: "Elevator2",
+    7: "Hall"
+}
+
+    # Replace values in the column
+    result['scene'] = result['scene'].map(mapping)
+    
     ############ Time에 sampling_rate 곱해서 frame 단위로 바꾸고, Time 기본은 남겨두고 frame을 index로 할 것.
 
     return df, event_markers_df, sampling_rate, result
@@ -342,56 +377,97 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
 
 
 #####################Anxiety#############################################
-def Anxiety_preprocessing(anxiety: list, scenes: list):
-    '''
-    Preprocessing Anxiety log file data.
-    *파일이 지저분한 관계로 임의 값이 다수 포함되어 있음.
-    설문 코드를 바꾸게 되면 값 수정 필요할 수 있음.
+def clip_slider(value):
+    return max(0, min(10, value)) #('Very\nCalm\n(0)','','','','','Medium\n\n(5)','','','','','Very\nAnxious\n(10)')
+
+
+def Anxietyloader(filepath,name, scenes=["Elevator1", "Outside", "Hallway", "Elevator2", "Hall"]):
+    # Initialize variables
     
-    '''
+    data = []
+    current_scene = None
+
+    # Define function to clip slider values
+
+
+    # Open and process the file
+    with open(filepath, 'r') as file:
+        for line in file:
+            # Extract time
+            time_match = re.match(r'(\d+\.\d{4})', line)
+            time = float(time_match.group(1)) if time_match else None
+
+            # Check for scene changes
+            if 'movie: autoDraw = True' in line:
+                current_scene = scenes.pop(0) if scenes else None
+            elif 'movie: autoDraw = False' in line:
+                current_scene = None
+
+            # Extract slider marker values
+            slider_match = re.search(r'slider: markerPos = ([\d\.]+)', line)
+            if slider_match:
+                slider_value = clip_slider(float(slider_match.group(1)))
+                data.append({'time': time, 'slider marker': slider_value, 'scene': current_scene, 'name': name})
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    # Save DataFrame to CSV
     
-    anxiety_psy = []
 
-    for infile in anxiety:
-        name = infile.split("\\")[1]
-        lst = []
-        with open(infile,encoding="ISO-8859-1") as f:
-            f = f.readlines()
+    print("Processing complete")
+    
+    return df
+
+# def Anxiety_preprocessing(anxiety: list, scenes: list):
+#     '''
+#     Preprocessing Anxiety log file data.
+#     *파일이 지저분한 관계로 임의 값이 다수 포함되어 있음.
+#     설문 코드를 바꾸게 되면 값 수정 필요할 수 있음.
+    
+#     '''
+    
+#     anxiety_psy = []
+
+#     for infile in anxiety:
+#         name = infile.split("\\")[1]
+#         lst = []
+#         with open(infile,encoding="ISO-8859-1") as f:
+#             f = f.readlines()
             
-        for lines in f:
-            lst.append(re.split(" \t|: | = |\n", lines))
+#         for lines in f:
+#             lst.append(re.split(" \t|: | = |\n", lines))
 
 
-        anxiety_df = pd.DataFrame(lst, columns=['Time', '1', 'video', 'type', 'marker', 'drop'])
-        anxiety_df = anxiety_df[anxiety_df['1'] == "EXP"]    
-        anxiety_df = anxiety_df.drop(["1","drop"], axis=1)
-        anxiety_df["Scene"] = 0
+#         anxiety_df = pd.DataFrame(lst, columns=['Time', '1', 'video', 'type', 'marker', 'drop'])
+#         anxiety_df = anxiety_df[anxiety_df['1'] == "EXP"]    
+#         anxiety_df = anxiety_df.drop(["1","drop"], axis=1)
+#         anxiety_df["Scene"] = 0
 
-        for idx in range(len(scenes)):
-            midx = idx + 1 
-            start = anxiety_df[(anxiety_df['video'] == f"movie{midx}")&(anxiety_df['type'] == "autoDraw")&(anxiety_df['marker'] == "True")].index[0]
-            end = anxiety_df[(anxiety_df['video'] == f"movie{midx}")&(anxiety_df['type'] == "autoDraw")&(anxiety_df['marker'] == "False")].index[0]
-            anxiety_df.loc[start:end+1, "Scene"] = scenes[idx] 
+#         for idx in range(len(scenes)):
+#             midx = idx + 1 
+#             start = anxiety_df[(anxiety_df['video'] == f"movie{midx}")&(anxiety_df['type'] == "autoDraw")&(anxiety_df['marker'] == "True")].index[0]
+#             end = anxiety_df[(anxiety_df['video'] == f"movie{midx}")&(anxiety_df['type'] == "autoDraw")&(anxiety_df['marker'] == "False")].index[0]
+#             anxiety_df.loc[start:end+1, "Scene"] = scenes[idx] 
             
-        anxiety_df = anxiety_df[anxiety_df['Scene'] != 0].reset_index(drop=True)
+#         anxiety_df = anxiety_df[anxiety_df['Scene'] != 0].reset_index(drop=True)
         
-        for scene in scenes:
-            _df = anxiety_df[anxiety_df["Scene"] == scene]
-            first = anxiety_df[anxiety_df["Scene"] == scene].index[0]
-            last = anxiety_df[anxiety_df["Scene"] == scene].index[-1]
-            startval = _df.loc[first+2,"marker"]
-            endval = _df.loc[last-3,"marker"]
+#         for scene in scenes:
+#             _df = anxiety_df[anxiety_df["Scene"] == scene]
+#             first = anxiety_df[anxiety_df["Scene"] == scene].index[0]
+#             last = anxiety_df[anxiety_df["Scene"] == scene].index[-1]
+#             startval = _df.loc[first+2,"marker"]
+#             endval = _df.loc[last-3,"marker"]
             
-            anxiety_df.loc[first:first+2,"marker"] = startval
-            anxiety_df.loc[last-2:last,"marker"] = endval  
+#             anxiety_df.loc[first:first+2,"marker"] = startval
+#             anxiety_df.loc[last-2:last,"marker"] = endval  
             
-        anxiety_df = anxiety_df.drop(["video","type"], axis=1)
-        anxiety_df["Subject"] = name
-        anxiety_df[["Time", "marker"]] = anxiety_df[["Time", "marker"]].astype("float64")
-        anxiety_df["marker"] = np.clip(anxiety_df["marker"],1,5)
-        anxiety_psy.append(anxiety_df)
+#         anxiety_df = anxiety_df.drop(["video","type"], axis=1)
+#         anxiety_df["Subject"] = name
+#         anxiety_df[["Time", "marker"]] = anxiety_df[["Time", "marker"]].astype("float64")
+#         anxiety_df["marker"] = np.clip(anxiety_df["marker"],1,5)
+#         anxiety_psy.append(anxiety_df)
 
-    return anxiety_psy
+#     return anxiety_psy
 
 
 def zero_to_nan(values):
