@@ -384,10 +384,13 @@ def clip_slider(value):
 def Anxietyloader(filepath,name, scenes=["Elevator1", "Outside", "Hallway", "Elevator2", "Hall"]):
     # Initialize variables
     
+    # Initialize variables
+    
     data = []
     current_scene = None
 
     # Define function to clip slider values
+
 
 
     # Open and process the file
@@ -396,10 +399,13 @@ def Anxietyloader(filepath,name, scenes=["Elevator1", "Outside", "Hallway", "Ele
             # Extract time
             time_match = re.match(r'(\d+\.\d{4})', line)
             time = float(time_match.group(1)) if time_match else None
+            # print(time)
 
             # Check for scene changes
             if 'movie: autoDraw = True' in line:
                 current_scene = scenes.pop(0) if scenes else None
+                data.append({'time': time, 'slider marker': np.nan, 'scene': current_scene, 'name': name})
+                
             elif 'movie: autoDraw = False' in line:
                 current_scene = None
 
@@ -411,9 +417,8 @@ def Anxietyloader(filepath,name, scenes=["Elevator1", "Outside", "Hallway", "Ele
 
     # Create DataFrame
     df = pd.DataFrame(data)
+    df = df.fillna(method="bfill")
     # Save DataFrame to CSV
-    
-
     print("Processing complete")
     
     return df
