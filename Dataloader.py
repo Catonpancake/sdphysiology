@@ -163,6 +163,7 @@ def dataloader(datapath_top: str, scenes: list):
                 dtype = in_folder.split("_")[-1].split(".")[0]
                 if dtype == "VR":
                     _,_,_,result = read_acqknowledge_with_markers(os.path.join(datapath, in_folder))
+                    result['Subject'] = folder
                     data["Physiology"].append(result)
             if formet == "xdf":
                 dtype = "Tracker"
@@ -196,39 +197,39 @@ def dataloader(datapath_top: str, scenes: list):
                 unity[dtype][scene].append(_df)
  
         
-    df = data['Tracker'][0][0]
-    # Now split the dataframe
-    mandatory_columns = ['Scene', 'Unitytime']
-    df.columns = rename_duplicates(list(df.columns))
-    # Identify "unit" columns
-    unit_columns = [col for col in df.columns if 'unit' in col]
-    # First dataframe: mandatory columns + "unit" columns
-    facetracker= df[mandatory_columns + unit_columns]
-    # Second dataframe: mandatory columns + all other columns not in df1
-    other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
-    eyetracker = df[mandatory_columns + other_columns]
-    
-    mapping = {
-    0: "Start",
-    1: "Practice",
-    2: "ElevatorTest",
-    3: "Elevator1",
-    4: "Outside",
-    5: "Hallway",
-    6: "Elevator2",
-    7: "Hall",
-    8: "End"
-}
+        df = data['Tracker'][0][0]
+        # Now split the dataframe
+        mandatory_columns = ['Scene', 'Unitytime']
+        df.columns = rename_duplicates(list(df.columns))
+        # Identify "unit" columns
+        unit_columns = [col for col in df.columns if 'unit' in col]
+        # First dataframe: mandatory columns + "unit" columns
+        facetracker= df[mandatory_columns + unit_columns]
+        # Second dataframe: mandatory columns + all other columns not in df1
+        other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
+        eyetracker = df[mandatory_columns + other_columns]
+        
+        mapping = {
+        0: "Start",
+        1: "Practice",
+        2: "ElevatorTest",
+        3: "Elevator1",
+        4: "Outside",
+        5: "Hallway",
+        6: "Elevator2",
+        7: "Hall",
+        8: "End"
+        }
 
-    # Replace values in the column
-    eyetracker['Scene'] = eyetracker['Scene'].map(mapping)
-    facetracker['Scene'] = facetracker['Scene'].map(mapping)
-    eyetracker.rename(columns={"Scene": "scene"}, inplace=True)
-    facetracker.rename(columns={"Scene": "scene"}, inplace=True)
-    
-    
-    data["Eyetracker"].append(eyetracker)
-    data["Facetracker"].append(facetracker)
+        # Replace values in the column
+        eyetracker['Scene'] = eyetracker['Scene'].map(mapping)
+        facetracker['Scene'] = facetracker['Scene'].map(mapping)
+        eyetracker.rename(columns={"Scene": "scene"}, inplace=True)
+        facetracker.rename(columns={"Scene": "scene"}, inplace=True)
+        eyetracker['Subject'], facetracker['Subject'] = folder, folder
+        
+        data["Eyetracker"].append(eyetracker)
+        data["Facetracker"].append(facetracker)
 
                 
 
