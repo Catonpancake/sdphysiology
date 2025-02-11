@@ -88,7 +88,7 @@ def xdfreaderfixer(directory: str, infodir: str = "ShimmerData.csv"):
         
         index += 1
             
-    testdata = nk.read_xdf(directory, desc = descs)
+    testdata = nk.read_xdf(directory, desc = descs, upsample= 1)
     
     return testdata
 
@@ -347,11 +347,10 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
     event_markers_df.set_index('Sample', inplace=True)
     result = pd.concat([df, event_markers_df], axis=1)
     for i in range(1,8):
-        startidx = result[(result['scene']==i)&(result['marker']=="Start")].index[0]
+        # startidx = result[(result['scene']==i)&(result['marker']=="Start")].index[0]
         startpidx = result[(result['scene']==i)&(result['marker']=="StartP")].index[0]
         endidx = result[(result['scene']==i)&(result['marker']=="End")].index[0]
-        result.loc[startidx:endidx, 'scene'] = i
-        result.loc[startidx:startpidx, 'marker'] = "Preparing"
+        result.loc[startpidx:endidx, 'scene'] = i
         result.loc[startpidx:endidx, 'marker'] = "Ongoing"
     result.dropna(inplace=True)
     
