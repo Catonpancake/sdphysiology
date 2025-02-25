@@ -171,35 +171,35 @@ def dataloader(datapath_top: str, scenes: list):
             if formet == "csv":
                 scene = in_folder.split("_")[0]
                 dtype = in_folder.split("_")[1].split(".")[0]
-                
-                if dtype == "customevent":
-                    _df = pd.read_csv(datapath+'/'+in_folder,
-                            engine='python',
-                            encoding='utf-8',
-                            names = ['ID','Time','Action', 'Actor', '1','2','3','4']
-                            ,header = None)   
-                    _df = _df.iloc[1:, :] 
-                    
+                if dtype != "SUDS":
+                    if dtype == "customevent":
+                        _df = pd.read_csv(datapath+'/'+in_folder,
+                                engine='python',
+                                encoding='utf-8',
+                                names = ['ID','Time','Action', 'Actor', '1','2','3','4']
+                                ,header = None)   
+                        _df = _df.iloc[1:, :] 
+                        
 
-                else:
-                    _df = pd.read_csv(datapath+'/'+in_folder,
-                            engine='python',
-                            encoding='utf-8')
-                if dtype == "position":
-                    zeros[scene][dtype] = _df[' Time'][0] 
-                
-                if (dtype == "position") | (dtype == "rotation"):
-                    _df = _df.rename(columns={" Time": "Time"," X": "X"," Y": "Y"," Z": "Z"})
+                    else:
+                        _df = pd.read_csv(datapath+'/'+in_folder,
+                                engine='python',
+                                encoding='utf-8')
+                    if dtype == "position":
+                        zeros[scene][dtype] = _df[' Time'][0] 
                     
-                _df['Subject'] = folder
+                    if (dtype == "position") | (dtype == "rotation"):
+                        _df = _df.rename(columns={" Time": "Time"," X": "X"," Y": "Y"," Z": "Z"})
+                        
+                    _df['Subject'] = folder
 
+                    # print(dtype, scene)
+                    unity[dtype][scene].append(_df)
     
-                unity[dtype][scene].append(_df)
- 
         
         df = data['Tracker'][0][0]
         # Now split the dataframe
-        mandatory_columns = ['Scene', 'Unitytime']
+        mandatory_columns = ['Scene', 'UnityTime']
         df.columns = rename_duplicates(list(df.columns))
         # Identify "unit" columns
         unit_columns = [col for col in df.columns if 'unit' in col]
