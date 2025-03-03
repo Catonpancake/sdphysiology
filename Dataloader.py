@@ -20,7 +20,7 @@ import scipy
 import pymannkendall as mk
 import matplotlib.pyplot as plt 
 import seaborn as sns
-
+import bioread
 
 import missingno as msno
 import csv
@@ -104,136 +104,303 @@ def rename_duplicates(columns):
             new_columns.append(f"{col}")
     return new_columns
 
+import os
+import traceback  # To capture full error details
+from glob import glob
+import pandas as pd
+import neurokit2 as nk
+
 def dataloader(datapath_top: str, scenes: list):
     '''
-    This function load data from experiment file folder.
-    Data list
-    #Anxiety data(.log)-anxiety_psy
-    #Transform data(.csv)-position, rotation, customevent in/out
+    This function loads experiment data while continuing even if errors occur.
+    
+    ✅ Logs which participants cause errors
+    ✅ Identifies which function failed
+    ✅ Outputs problematic data for debugging
     '''
-    #Data loader: Position and rotation data, anxiety data.
-    #folder name
+
     names = []
-    #Anxiety data psychopy room
-    data = {}
-    data["Psychopy"] = []
-    #Physiology data room
-    data["Physiology"] = []
-    data["Tracker"] = []
-    data["Eyetracker"] = []
-    data["Facetracker"] = []
-    
-    
-    #Transform data
+    data = {
+        "Psychopy": [],
+        "Physiology": [],
+        "Tracker": [],
+        "Eyetracker": [],
+        "Facetracker": []
+    }
     unity = defaultdict(dict)
-    #start time
     zeros = defaultdict(dict)
     pIDs = defaultdict(dict)
-    
-    ## Create List for the Space tp Store
-    datapath = os.path.join(datapath_top, os.listdir(datapath_top)[0])
-    for in_folder in os.listdir(datapath):
-        formet = in_folder.split(".")[-1]
-        # if formet == "xdf":
-        #     dtype = in_folder.split("_")[-1].split(".")[0]
-        #     data[dtype] = []
-        if formet == "csv":
-            scene = in_folder.split("_")[0]
-            dtype = in_folder.split("_")[1].split(".")[0]
-            unity[dtype][scene] = []
-            pIDs[dtype][scene] = []
-            
-   
+
     for folder in os.listdir(datapath_top):        
         datapath = os.path.join(datapath_top, folder)
         names.append(folder)
-        print(folder)
-        #anxiety data
-        for log in glob(datapath+ '/*.log'):
-            data["Psychopy"].append(log)
+        print(f"\n🔹 Processing participant: {folder}")
+
+        try:
+            # ✅ 1) Process Anxiety Log Files
+            for log in glob(datapath + '/*.log'):
+                try:
+                    data["Psychopy"].append(log)
+                except Exception as e:
+                    print(f"❌ Error in Processing Anxiety Log ({folder})\n{e}")
+                    traceback.print_exc()
+
+            # ✅ 2) Process Physiology, Tracker, and Unity Data
+            for in_folder in os.listdir(datapath):
+                file_path = os.path.join(datapath, in_folder)
+                file_ext = in_folder.split(".")[-1]
+
+                # ✅ Read .acq files (Physiology)
+                if file_ext == "acq":
+                    try:
+                        _, _, _, result = read_acqknowledge_with_markers(file_path)
+                        result['Subject'] = folder
+                        data["Physiology"].append(result)
+                    except Exception as e:
+                        print(f"❌ Error in read_acqknowledge_with_markers() ({folder}) - File: {in_folder}\n{e}")
+                        traceback.print_exc()
+
+                # ✅ Read .xdf files (Tracker)
+                elif file_ext == "xdf":
+                    try:
+                        dtype = "Tracker"
+                        data[dtype].append(xdfreaderfixer(file_path))
+                    except Exception as e:
+                        print(f"❌ Error in xdfreaderfixer() ({folder}) - File: {in_folder}\n{e}")
+                        traceback.print_exc()
+
+                # ✅ Read CSV Files (Unity Data)
+                elif file_ext == "csv":
+                    try:
+                        scene = in_folder.split("_")[0]
+                        dtype = in_folder.split("_")[1].split(".")[0]
+
+                        if dtype != "SUDS":
+                            _df = read_csv_with_max_columns(file_path)  # ✅ Use optimized function
+
+                            if dtype == "position":
+                                zeros[scene][dtype] = _df[' Time'][0]
+
+                            if dtype in ["position", "rotation"]:
+                                _df = _df.rename(columns={" Time": "Time", " X": "X", " Y": "Y", " Z": "Z"})
+
+                            _df['Subject'] = folder
+                            unity[dtype][scene] = _df
+                    except Exception as e:
+                        print(f"❌ Error in Reading CSV ({folder}) - File: {in_folder}\n{e}")
+                        traceback.print_exc()
+
+            # ✅ 3) Process Tracker Data into Eye/Face Tracker
+            try:
+                df = data['Tracker'][0][0]
+                df.columns = rename_duplicates(list(df.columns))
+
+                mandatory_columns = ['Scene', 'UnityTime']
+                unit_columns = [col for col in df.columns if 'unit' in col]
+                facetracker = df[mandatory_columns + unit_columns]
+                other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
+                eyetracker = df[mandatory_columns + other_columns]
+
+                mapping = {0: "Start", 1: "Practice", 2: "ElevatorTest", 3: "Elevator1",
+                           4: "Outside", 5: "Hallway", 6: "Elevator2", 7: "Hall", 8: "End"}
+                
+                eyetracker = eyetracker.copy()
+                facetracker = facetracker.copy()
+
+                eyetracker.loc[:, 'Scene'] = eyetracker['Scene'].map(mapping)
+                facetracker.loc[:, 'Scene'] = facetracker['Scene'].map(mapping)
+                eyetracker = eyetracker.rename(columns={"Scene": "scene"})
+                facetracker = facetracker.rename(columns={"Scene": "scene"})
+                eyetracker.loc[:, 'Subject'] = folder
+                facetracker.loc[:, 'Subject'] = folder
+
+                data["Eyetracker"].append(eyetracker)
+                data["Facetracker"].append(facetracker)
+
+            except Exception as e:
+                print(f"❌ Error in Processing Tracker Data ({folder})\n{e}")
+                traceback.print_exc()
+
+        except Exception as e:
+            print(f"\n🚨 Critical Error in Participant {folder}: {e}")
+            traceback.print_exc()
+
+    return names, data, unity
+
+# def dataloader(datapath_top: str, scenes: list):
+#     '''
+#     This function load data from experiment file folder.
+#     Data list
+#     #Anxiety data(.log)-anxiety_psy
+#     #Transform data(.csv)-position, rotation, customevent in/out
+#     '''
+#     #Data loader: Position and rotation data, anxiety data.
+#     #folder name
+#     names = []
+#     #Anxiety data psychopy room
+#     data = {}
+#     data["Psychopy"] = []
+#     #Physiology data room
+#     data["Physiology"] = []
+#     data["Tracker"] = []
+#     data["Eyetracker"] = []
+#     data["Facetracker"] = []
+    
+    
+#     #Transform data
+#     unity = defaultdict(dict)
+#     #start time
+#     zeros = defaultdict(dict)
+#     pIDs = defaultdict(dict)
+    
+#     ## Create List for the Space tp Store
+#     datapath = os.path.join(datapath_top, os.listdir(datapath_top)[0])
+#     for in_folder in os.listdir(datapath):
+#         formet = in_folder.split(".")[-1]
+#         # if formet == "xdf":
+#         #     dtype = in_folder.split("_")[-1].split(".")[0]
+#         #     data[dtype] = []
+#         if formet == "csv":
+#             scene = in_folder.split("_")[0]
+#             dtype = in_folder.split("_")[1].split(".")[0]
+#             unity[dtype][scene] = []
+#             pIDs[dtype][scene] = []
             
-        #Transform data
-        _allpos = pd.DataFrame()
-        _allrot = pd.DataFrame()
-        _allcus = pd.DataFrame()
+   
+#     for folder in os.listdir(datapath_top):        
+#         datapath = os.path.join(datapath_top, folder)
+#         names.append(folder)
+#         print(folder)
+#         #anxiety data
+#         for log in glob(datapath+ '/*.log'):
+#             data["Psychopy"].append(log)
+            
+#         #Transform data
+#         _allpos = pd.DataFrame()
+#         _allrot = pd.DataFrame()
+#         _allcus = pd.DataFrame()
         
-        for in_folder in os.listdir(datapath):
-            formet = in_folder.split(".")[-1]
-            if formet == "acq":
-                dtype = in_folder.split("_")[-1].split(".")[0]
-                if dtype == "VR":
-                    _,_,_,result = read_acqknowledge_with_markers(os.path.join(datapath, in_folder))
-                    result['Subject'] = folder
-                    data["Physiology"].append(result)
-            if formet == "xdf":
-                dtype = "Tracker"
-                data[dtype].append(xdfreaderfixer(os.path.join(datapath, in_folder)))
-            if formet == "csv":
-                scene = in_folder.split("_")[0]
-                dtype = in_folder.split("_")[1].split(".")[0]
-                if dtype != "SUDS":
-                    if dtype == "customevent":
-                        _df = pd.read_csv(datapath+'/'+in_folder,
-                                engine='python',
-                                encoding='utf-8',
-                                names = ['ID','Time','Action', 'Actor', '1','2','3','4']
-                                ,header = None)   
-                        _df = _df.iloc[1:, :] 
+#         for in_folder in os.listdir(datapath):
+#             formet = in_folder.split(".")[-1]
+#             if formet == "acq":
+#                 dtype = in_folder.split("_")[-1].split(".")[0]
+#                 if dtype == "VR":
+#                     _,_,_,result = read_acqknowledge_with_markers(os.path.join(datapath, in_folder))
+#                     result['Subject'] = folder
+#                     data["Physiology"].append(result)
+#             if formet == "xdf":
+#                 dtype = "Tracker"
+#                 data[dtype].append(xdfreaderfixer(os.path.join(datapath, in_folder)))
+#             if formet == "csv":
+#                 scene = in_folder.split("_")[0]
+#                 dtype = in_folder.split("_")[1].split(".")[0]
+#                 if dtype != "SUDS":
+#                     if dtype == "customevent":
+#                         _df = pd.read_csv(datapath+'/'+in_folder,
+#                                 engine='python',
+#                                 encoding='utf-8',
+#                                 names = ['ID','Time','Action', 'Actor', '1','2','3','4']
+#                                 ,header = None)   
+#                         _df = _df.iloc[1:, :] 
                         
 
-                    else:
-                        _df = pd.read_csv(datapath+'/'+in_folder,
-                                engine='python',
-                                encoding='utf-8')
-                    if dtype == "position":
-                        zeros[scene][dtype] = _df[' Time'][0] 
+#                     else:
+#                         _df = pd.read_csv(datapath+'/'+in_folder,
+#                                 engine='python',
+#                                 encoding='utf-8')
+#                     if dtype == "position":
+#                         zeros[scene][dtype] = _df[' Time'][0] 
                     
-                    if (dtype == "position") | (dtype == "rotation"):
-                        _df = _df.rename(columns={" Time": "Time"," X": "X"," Y": "Y"," Z": "Z"})
+#                     if (dtype == "position") | (dtype == "rotation"):
+#                         _df = _df.rename(columns={" Time": "Time"," X": "X"," Y": "Y"," Z": "Z"})
                         
-                    _df['Subject'] = folder
+#                     _df['Subject'] = folder
 
-                    # print(dtype, scene)
-                    unity[dtype][scene].append(_df)
+#                     # print(dtype, scene)
+#                     unity[dtype][scene].append(_df)
     
         
-        df = data['Tracker'][0][0]
-        # Now split the dataframe
-        mandatory_columns = ['Scene', 'UnityTime']
-        df.columns = rename_duplicates(list(df.columns))
-        # Identify "unit" columns
-        unit_columns = [col for col in df.columns if 'unit' in col]
-        # First dataframe: mandatory columns + "unit" columns
-        facetracker= df[mandatory_columns + unit_columns]
-        # Second dataframe: mandatory columns + all other columns not in df1
-        other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
-        eyetracker = df[mandatory_columns + other_columns]
+#         df = data['Tracker'][0][0]
+#         # Now split the dataframe
+#         mandatory_columns = ['Scene', 'UnityTime']
+#         df.columns = rename_duplicates(list(df.columns))
+#         # Identify "unit" columns
+#         unit_columns = [col for col in df.columns if 'unit' in col]
+#         # First dataframe: mandatory columns + "unit" columns
+#         facetracker= df[mandatory_columns + unit_columns]
+#         # Second dataframe: mandatory columns + all other columns not in df1
+#         other_columns = [col for col in df.columns if col not in mandatory_columns + unit_columns]
+#         eyetracker = df[mandatory_columns + other_columns]
         
-        mapping = {
-        0: "Start",
-        1: "Practice",
-        2: "ElevatorTest",
-        3: "Elevator1",
-        4: "Outside",
-        5: "Hallway",
-        6: "Elevator2",
-        7: "Hall",
-        8: "End"
-        }
+#         mapping = {
+#         0: "Start",
+#         1: "Practice",
+#         2: "ElevatorTest",
+#         3: "Elevator1",
+#         4: "Outside",
+#         5: "Hallway",
+#         6: "Elevator2",
+#         7: "Hall",
+#         8: "End"
+#         }
 
-        # Replace values in the column
-        eyetracker['Scene'] = eyetracker['Scene'].map(mapping)
-        facetracker['Scene'] = facetracker['Scene'].map(mapping)
-        eyetracker.rename(columns={"Scene": "scene"}, inplace=True)
-        facetracker.rename(columns={"Scene": "scene"}, inplace=True)
-        eyetracker['Subject'], facetracker['Subject'] = folder, folder
+#         # Replace values in the column
+#         eyetracker['Scene'] = eyetracker['Scene'].map(mapping)
+#         facetracker['Scene'] = facetracker['Scene'].map(mapping)
+#         eyetracker.rename(columns={"Scene": "scene"}, inplace=True)
+#         facetracker.rename(columns={"Scene": "scene"}, inplace=True)
+#         eyetracker['Subject'], facetracker['Subject'] = folder, folder
         
-        data["Eyetracker"].append(eyetracker)
-        data["Facetracker"].append(facetracker)
+#         data["Eyetracker"].append(eyetracker)
+#         data["Facetracker"].append(facetracker)
 
                 
 
-    return (names, data, unity)
+#     return (names, data, unity)
+
+def read_csv_with_max_columns(file_path, encoding='utf-8'):
+    """
+    Efficiently determine the maximum number of columns in a CSV and load it dynamically.
+
+    Parameters:
+    ----------
+    file_path : str
+        Path to the CSV file.
+    encoding : str
+        Encoding of the file (default: 'utf-8').
+
+    Returns:
+    ----------
+    df : pandas.DataFrame
+        DataFrame with the correct number of columns.
+    """
+    try:
+        # Step 1: Determine the maximum number of columns
+        max_columns = 0
+        all_rows = []
+
+        with open(file_path, "r", encoding=encoding) as f:
+            reader = csv.reader(f)
+            for row in reader:
+                max_columns = max(max_columns, len(row))  # Track the max columns
+                all_rows.append(row)  # Store rows for processing
+
+        # Step 2: Normalize rows to have the same number of columns
+        normalized_rows = [row + [''] * (max_columns - len(row)) for row in all_rows]
+
+        # Step 3: Create a DataFrame from the normalized rows
+        df = pd.DataFrame(normalized_rows)
+
+        # Step 4: Use the first row as column names (if applicable)
+        df.columns = df.iloc[0]  # Set column headers
+        df = df[1:].reset_index(drop=True)  # Drop the header row from data
+
+        return df
+
+    except Exception as e:
+        print(f"❌ Error loading {file_path}: {e}")
+        return None
+
 ###################.acq 파일 마커와 같이 전처리 #################
 import os
 from collections import Counter
@@ -247,49 +414,58 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 from neurokit2.signal import signal_resample
-
+import sys
+import contextlib
 
 def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_method="interpolation", impute_missing=True):
     """
-    Read and format a BIOPAC's AcqKnowledge file into a pandas' dataframe, including event markers.
+    Read and process a BIOPAC AcqKnowledge file (.acq) while handling VR, Survey, and BT files differently.
 
     Parameters
     ----------
     filename : str
-        Filename (with or without the extension) of a BIOPAC's AcqKnowledge file (e.g., "data.acq").
+        Path to a BIOPAC's AcqKnowledge (.acq) file.
     sampling_rate : int or "max"
-        Desired sampling rate in Hz. "max" uses the maximum recorded sampling rate.
+        Desired sampling rate in Hz. "max" uses the highest recorded rate.
     resample_method : str
-        Method of resampling.
+        Method for resampling signals.
     impute_missing : bool
-        Whether to impute missing values in the signal.
+        Whether to impute missing values in signals.
 
     Returns
     ----------
     df : DataFrame
-        The AcqKnowledge file as a pandas dataframe.
-    event_markers : DataFrame
-        Event markers with columns ['Time (s)', 'Channel', 'Type', 'Text'].
+        Processed signal data from the .acq file.
+    event_markers_df : DataFrame
+        Event markers with ['Sample', 'scene', 'marker'].
     sampling_rate : int
-        Sampling rate used in the data.
-
+        The actual sampling rate used.
+    result : DataFrame
+        Merged dataframe of signal and event markers.
     """
-    try:
-        import bioread
-    except ImportError:
-        raise ImportError("Please install the 'bioread' module (`pip install bioread`).")
 
-    # Check filename
-    if not filename.endswith(".acq"):
-        filename += ".acq"
+    # Scene mapping (moved inside function)
+    scene_mapping = {
+        1: "Practice",
+        2: "ElevatorTest",
+        3: "Elevator1",
+        4: "Outside",
+        5: "Hallway",
+        6: "Elevator2",
+        7: "Hall"
+    }
 
+    # Check if file exists
     if not os.path.exists(filename):
         raise ValueError(f"File not found: {filename}")
 
-    # Read the AcqKnowledge file
-    file = bioread.read_file(filename)
+    # Read AcqKnowledge file
+    # Silence bioread warnings
+    with open(os.devnull, 'w') as fnull:
+        with contextlib.redirect_stdout(fnull), contextlib.redirect_stderr(fnull):
+            file = bioread.read_file(filename)  # Read file silently
 
-    # Determine sampling rate
+    # Determine max sampling rate
     if sampling_rate == "max":
         sampling_rate = max(channel.samples_per_second for channel in file.channels)
 
@@ -303,7 +479,7 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
         if impute_missing and np.isnan(signal).any():
             signal = pd.Series(signal).fillna(method="pad").values
 
-        # Resample signal
+        # Resample signal if needed
         if channel.samples_per_second != sampling_rate:
             signal = signal_resample(
                 signal,
@@ -332,43 +508,54 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
     event_markers = []
     for marker in file.event_markers:
         event_markers.append({
-            "Time (s)": marker.sample_index / sampling_rate,
-            "Channel": marker.channel_name,
-            "Type": marker.type,
+            "Time (s)": marker.sample_index / sampling_rate,  # Convert index to seconds
             "Text": marker.text
         })
-    event_markers_df = pd.DataFrame(event_markers)
-    event_markers_df['Sample'] = event_markers_df['Time (s)']*2000
-    event_markers_df[['scene', 'marker']] = event_markers_df['Text'].str.split(',', n=2, expand=True)[[0, 1]]
-    event_markers_df = event_markers_df[event_markers_df['Type'] != 'Append']
-    event_markers_df.drop(columns=['Text','Channel','Type','Time (s)'], inplace=True)
-    event_markers_df['scene'] = pd.to_numeric(event_markers_df['scene'])
-    event_markers_df['Sample'] = event_markers_df['Sample'].apply(np.int64)
-    event_markers_df.set_index('Sample', inplace=True)
-    result = pd.concat([df, event_markers_df], axis=1)
-    for i in range(1,8):
-        # startidx = result[(result['scene']==i)&(result['marker']=="Start")].index[0]
-        startpidx = result[(result['scene']==i)&(result['marker']=="StartP")].index[0]
-        endidx = result[(result['scene']==i)&(result['marker']=="End")].index[0]
-        result.loc[startpidx:endidx, 'scene'] = i
-        result.loc[startpidx:endidx, 'marker'] = "Ongoing"
-    result.dropna(inplace=True)
-    
-    
-    mapping = {
-    1: "Practice",
-    2: "ElevatorTest",
-    3: "Elevator1",
-    4: "Outside",
-    5: "Hallway",
-    6: "Elevator2",
-    7: "Hall"
-}
 
-    # Replace values in the column
-    result['scene'] = result['scene'].map(mapping)
-    
-    ############ Time에 sampling_rate 곱해서 frame 단위로 바꾸고, Time 기본은 남겨두고 frame을 index로 할 것.
+    # Convert to DataFrame
+    event_markers_df = pd.DataFrame(event_markers)
+    event_markers_df['Sample'] = (event_markers_df['Time (s)'] * sampling_rate).astype(int)
+
+    # Detect file type
+    file_basename = os.path.basename(filename)
+    is_vr = "_VR.acq" in file_basename
+    is_survey = "_Survey.acq" in file_basename
+    is_bt = "_BT.acq" in file_basename
+
+    # Process VR files (Use number-based mapping)
+    if is_vr:
+        event_markers_df[['scene_number', 'marker']] = event_markers_df['Text'].str.split(',', expand=True).iloc[:, :2]
+        event_markers_df['scene_number'] = pd.to_numeric(event_markers_df['scene_number'], errors='coerce')
+        event_markers_df['scene'] = event_markers_df['scene_number'].map(scene_mapping)
+        event_markers_df.drop(columns=['scene_number'], inplace=True)
+
+        # Assign missing markers
+        for i in range(1, 8):
+            startp_rows = event_markers_df[(event_markers_df['scene'] == scene_mapping.get(i)) & (event_markers_df['marker'] == "StartP")]
+            end_rows = event_markers_df[(event_markers_df['scene'] == scene_mapping.get(i)) & (event_markers_df['marker'] == "End")]
+
+            if not startp_rows.empty and not end_rows.empty:
+                startp_idx = startp_rows.index[0]
+                end_idx = end_rows.index[0]
+                event_markers_df.loc[startp_idx:end_idx, 'marker'] = "Ongoing"
+
+    # Process Survey files (Use scene name directly)
+    elif is_survey:
+        event_markers_df[['scene_number', 'scene']] = event_markers_df['Text'].str.split('_', n=1, expand=True)
+        event_markers_df.drop(columns=['scene_number'], inplace=True)
+
+    # Process BT files (Extract bt images)
+    elif is_bt:
+        event_markers_df['bt_image'] = event_markers_df['Text'].apply(lambda x: x if 'bt' in x else np.nan)
+
+    # Drop unnecessary text column
+    event_markers_df.drop(columns=['Text'], inplace=True)
+
+    # Set index as Sample for merging with signal data
+    event_markers_df.set_index('Sample', inplace=True)
+
+    # Merge signal data with event markers
+    result = pd.concat([df, event_markers_df], axis=1)
 
     return df, event_markers_df, sampling_rate, result
 
@@ -470,15 +657,9 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
 #     event_markers_df.set_index('Sample', inplace=True)
 #     result = pd.concat([df, event_markers_df], axis=1)
 #     for i in range(1,8):
-    
-#         startpidx = result[(result['scene']==i)&(result['marker']=="Start")].index[0]
-#         if i != 7:
-#             endidx = result[(result['scene']==i+1)&(result['marker']=="Start")].index[0]-1 ##Should be removed later
-#         else:
-#             endidx = len(result)-1 ##Should be removed later
-            
-        
-#         # endidx = result[(result['scene']==i)&(result['marker']=="End")].index[0] ##Should be added later
+#         # startidx = result[(result['scene']==i)&(result['marker']=="Start")].index[0]
+#         startpidx = result[(result['scene']==i)&(result['marker']=="StartP")].index[0]
+#         endidx = result[(result['scene']==i)&(result['marker']=="End")].index[0]
 #         result.loc[startpidx:endidx, 'scene'] = i
 #         result.loc[startpidx:endidx, 'marker'] = "Ongoing"
 #     result.dropna(inplace=True)
@@ -500,8 +681,28 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
 #     ############ Time에 sampling_rate 곱해서 frame 단위로 바꾸고, Time 기본은 남겨두고 frame을 index로 할 것.
 
 #     return df, event_markers_df, sampling_rate, result
+def check_acq_markers(file_path):
+    """
+    Reads a .acq file and prints all marker types found.
+    
+    :param file_path: Path to the .acq file
+    """
+    try:
+        # Load the AcqKnowledge file
+        file = bioread.read_file(file_path)
 
+        if not file.event_markers:
+            print(f"⚠️ No event markers found in {file_path}")
+            return
 
+        # Print marker details
+        print(f"\n🔍 Markers found in {file_path}:")
+
+        for marker in file.event_markers:
+            print(f"🔹 Marker Type: {marker.type}, Channel: {marker.channel_name}, Text: {marker.text}")
+
+    except Exception as e:
+        print(f"❌ Error reading {file_path}: {e}")
 
 
 #####################Anxiety#############################################
