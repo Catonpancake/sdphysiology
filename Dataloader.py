@@ -528,16 +528,17 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
         event_markers_df['scene_number'] = pd.to_numeric(event_markers_df['scene_number'], errors='coerce')
         event_markers_df['scene'] = event_markers_df['scene_number'].map(scene_mapping)
         event_markers_df.drop(columns=['scene_number'], inplace=True)
-
+        event_markers_df.set_index("Sample", inplace=True)
         # Assign missing markers
         for i in range(1, 8):
             startp_rows = event_markers_df[(event_markers_df['scene'] == scene_mapping.get(i)) & (event_markers_df['marker'] == "StartP")]
             end_rows = event_markers_df[(event_markers_df['scene'] == scene_mapping.get(i)) & (event_markers_df['marker'] == "End")]
-
+            
             if not startp_rows.empty and not end_rows.empty:
                 startp_idx = startp_rows.index[0]
                 end_idx = end_rows.index[0]
-                event_markers_df.loc[startp_idx:end_idx, 'marker'] = "Ongoing"
+                df.loc[(df.index >= startp_idx) & (df.index <= end_idx), "marker"] = "Ongoing"
+                df.loc[(df.index >= startp_idx) & (df.index <= end_idx), "scene"] = scene_mapping.get(i)
 
     # Process Survey files (Use scene name directly)
     elif is_survey:
@@ -551,13 +552,13 @@ def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_metho
     # Drop unnecessary text column
     event_markers_df.drop(columns=['Text'], inplace=True)
 
-    # Set index as Sample for merging with signal data
-    event_markers_df.set_index('Sample', inplace=True)
+    # # # Set index as Sample for merging with signal data
+    # # event_markers_df.set_index('Sample', inplace=True)
 
-    # Merge signal data with event markers
-    result = pd.concat([df, event_markers_df], axis=1)
+    # # Merge signal data with event markers
+    # result = pd.concat([df, event_markers_df], axis=1)
 
-    return df, event_markers_df, sampling_rate, result
+    return df, event_markers_df, sampling_rate
 
 # def read_acqknowledge_with_markers(filename, sampling_rate="max", resample_method="interpolation", impute_missing=True):
 #     """
@@ -706,51 +707,94 @@ def check_acq_markers(file_path):
 
 
 #####################Anxiety#############################################
+# ✅ Updated Anxietyloader
+import re
+import numpy as np
+import pandas as pd
+
 def clip_slider(value):
-    return max(0, min(10, value)) #('Very\nCalm\n(0)','','','','','Medium\n\n(5)','','','','','Very\nAnxious\n(10)')
+    return max(0, min(10, value))  # Clip slider between 0 and 10
 
-
-def Anxietyloader(filepath,name, scenes=["Elevator1", "Outside", "Hallway", "Elevator2", "Hall"]):
-    # Initialize variables
-    
-    # Initialize variables
-    
+def Anxietyloader(filepath, name, scenes=["Elevator1", "Outside", "Hallway", "Elevator2", "Hall"]):
     data = []
+    scenes_copy = scenes.copy()
     current_scene = None
 
-    # Define function to clip slider values
-
-
-
-    # Open and process the file
     with open(filepath, 'r') as file:
         for line in file:
-            # Extract time
             time_match = re.match(r'(\d+\.\d{4})', line)
             time = float(time_match.group(1)) if time_match else None
-            # print(time)
 
-            # Check for scene changes
             if 'movie: autoDraw = True' in line:
-                current_scene = scenes.pop(0) if scenes else None
+                current_scene = scenes_copy.pop(0) if scenes_copy else None
                 data.append({'time': time, 'slider marker': np.nan, 'scene': current_scene, 'name': name})
-                
+
             elif 'movie: autoDraw = False' in line:
                 current_scene = None
 
-            # Extract slider marker values
-            slider_match = re.search(r'slider: markerPos = ([\d\.]+)', line)
-            if slider_match:
+            slider_match = re.search(r'slider: markerPos = ([\d\.\-]+)', line)  # 👈 음수도 커버
+            if slider_match and current_scene is not None:
                 slider_value = clip_slider(float(slider_match.group(1)))
                 data.append({'time': time, 'slider marker': slider_value, 'scene': current_scene, 'name': name})
 
-    # Create DataFrame
     df = pd.DataFrame(data)
-    df = df.fillna(method="bfill")
-    # Save DataFrame to CSV
-    print("Processing complete")
-    
+
+    # Step 1: scene 이름은 ffill (slider 없이 scene만 나오는 경우를 대비)
+    df['scene'] = df['scene'].ffill()
+
+    # ❗ Step 2: slider marker는 "절대 fill 안 함" (frame 변환 이후 따로 처리할 것)
+    # (bfill, ffill 모두 제거)
+
+    print("✅ Anxietyloader (raw, no fill) processing complete:", filepath)
     return df
+
+
+
+
+
+
+
+# def Anxietyloader(filepath,name, scenes=["Elevator1", "Outside", "Hallway", "Elevator2", "Hall"]):
+#     # Initialize variables
+    
+#     # Initialize variables
+    
+#     data = []
+#     current_scene = None
+
+#     # Define function to clip slider values
+
+
+
+#     # Open and process the file
+#     with open(filepath, 'r') as file:
+#         for line in file:
+#             # Extract time
+#             time_match = re.match(r'(\d+\.\d{4})', line)
+#             time = float(time_match.group(1)) if time_match else None
+#             # print(time)
+
+#             # Check for scene changes
+#             if 'movie: autoDraw = True' in line:
+#                 current_scene = scenes.pop(0) if scenes else None
+#                 data.append({'time': time, 'slider marker': np.nan, 'scene': current_scene, 'name': name})
+                
+#             elif 'movie: autoDraw = False' in line:
+#                 current_scene = None
+
+#             # Extract slider marker values
+#             slider_match = re.search(r'slider: markerPos = ([\d\.]+)', line)
+#             if slider_match:
+#                 slider_value = clip_slider(float(slider_match.group(1)))
+#                 data.append({'time': time, 'slider marker': slider_value, 'scene': current_scene, 'name': name})
+
+#     # Create DataFrame
+#     df = pd.DataFrame(data)
+#     df = df.fillna(method="bfill")
+#     # Save DataFrame to CSV
+#     print("Processing complete")
+    
+#     return df
 
 # def Anxiety_preprocessing(anxiety: list, scenes: list):
 #     '''
