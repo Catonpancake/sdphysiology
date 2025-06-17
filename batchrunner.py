@@ -1,6 +1,7 @@
 import os
 import subprocess
-
+## Pair with physiology_batch_process.py and physiologycheck.py. Run this script to process physiology data in batches.
+## run with `python batchrunner.py` in python environment.
 # === Configuration ===
 data_root = 'D:/LabRoom/Projects/SD Physiology/Processed/main'
 batch_size = 30

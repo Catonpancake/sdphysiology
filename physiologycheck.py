@@ -10,7 +10,8 @@ import psutil
 from neurokit2.signal import signal_rate, signal_sanitize
 from neurokit2.misc import as_vector
 from Dataloader import read_acqknowledge_with_markers
-
+## pair with physiology_batch_process.py and batchrunner.py. 
+# This script processes physiology data for each participant in a sub-batch, due to memory issues.
 
 def memory_debug(label=""):
     process = psutil.Process(os.getpid())

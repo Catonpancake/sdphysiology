@@ -4,6 +4,9 @@ import gc
 from physiologycheck import physiologyprocess
 import psutil
 
+## This script process physiolgy data for each participant in a sub-batch, due to memory issue.
+## This is processing code. run this script.
+
 def memory_debug(tag=""):
     mem = psutil.Process(os.getpid()).memory_info().rss / (1024 ** 2)
     print(f"[{tag}] 💾 {mem:.1f}MB", flush=True)
