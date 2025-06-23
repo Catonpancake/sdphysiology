@@ -75,11 +75,11 @@ def detect_abnormal_eda(signals_eda, eda_info, sampling_rate):
     else:
         noise_ratio = np.nan
     exclude_eda = (
-        scr_per_min < 0.5 or
-        scr_per_min > 10 or
-        tonic_std < 0.05 or
-        abs(tonic_drift) > 0.5 or
-        noise_ratio > 0.3
+        scr_per_min < 0.2
+        # scr_per_min > 10 or
+        # tonic_std < 0.05 
+        # abs(tonic_drift) > 0.5 or
+        # noise_ratio > 0.3
     )
     return {
         "scr_count": scr_count,
@@ -111,7 +111,7 @@ def detect_abnormal_rsp(signals_rsp, info_rsp, sampling_rate):
 
     rate = signals_rsp.get("RSP_Rate", [])
     if len(rate) > 0:
-        abnormal_rsp_ratio = ((rate < 6) | (rate > 30)).sum() / len(rate)
+        abnormal_rsp_ratio = ((rate < 8) | (rate > 25)).sum() / len(rate)
         mean_rsp_rate = rate.mean()
         std_rsp_rate = rate.std()
     else:
@@ -119,7 +119,7 @@ def detect_abnormal_rsp(signals_rsp, info_rsp, sampling_rate):
         mean_rsp_rate = 0
         std_rsp_rate = 0
 
-    exclude_rsp = rsp_quality < 0.5 or abnormal_rsp_ratio > 0.05  # 완화 기준 반영
+    exclude_rsp = rsp_quality < 0.5 or abnormal_rsp_ratio > 0.40  # 완화 기준 반영
     return {
         "mean_rsp_rate": mean_rsp_rate,
         "std_rsp_rate": std_rsp_rate,
