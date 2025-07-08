@@ -1,5 +1,3 @@
-# physiologycheck.py
-
 import os
 import gc
 import pandas as pd
@@ -119,7 +117,9 @@ def detect_abnormal_rsp(signals_rsp, info_rsp, sampling_rate):
         mean_rsp_rate = 0
         std_rsp_rate = 0
 
-    exclude_rsp = rsp_quality < 0.5 or abnormal_rsp_ratio > 0.40  # 완화 기준 반영
+    # exclude_rsp = rsp_quality < 0.5 or abnormal_rsp_ratio > 0.40  # 완화 기준 반영
+    exclude_rsp = rsp_quality < 0.3 or abnormal_rsp_ratio > 0.40  # 완화 기준 반영
+    
     return {
         "mean_rsp_rate": mean_rsp_rate,
         "std_rsp_rate": std_rsp_rate,
@@ -291,3 +291,92 @@ def physiologyprocess(data_root='D:/LabRoom/Projects/SD Physiology/Processed/mai
             memory_debug("After del and gc")
 
     print("\n✅ All data processed and saved.")
+    
+import os
+import gc
+import pandas as pd
+import neurokit2 as nk
+from bioread import read_file
+from physiologycheck import detect_abnormal_rsp, signal_rate
+import matplotlib.pyplot as plt
+
+
+def process_rsp_only_all_channels(data_root, output_dir, log_dir='./logs', selected_participants=None, figure=True):
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+
+    def append_log(df):
+        os.makedirs(log_dir, exist_ok=True)  # ensure directory
+        log_file = os.path.join(log_dir, f"abnormal_rsp_allchannels.csv")
+        header = not os.path.exists(log_file)
+
+        if not df.empty:
+            df.to_csv(log_file, mode='a', header=header, index=False)
+            print(f"✅ Logged: {log_file}")
+        else:
+            print("⚠️ Warning: Empty dataframe, nothing logged.")
+
+    # 🔄 파일 기반 처리 (폴더가 아닌)
+    files = [f for f in os.listdir(data_root) if f.endswith(".acq") and "BT" not in f]
+    if selected_participants:
+        files = [f for f in files if any(p in f for p in selected_participants)]
+
+    for file in sorted(files):
+        try:
+            acq_path = os.path.join(data_root, file)
+            participant = file.split("_")[0]  # 파일명에서 participant ID 추정
+            raw = read_file(acq_path)
+            sampling_rate = 2000
+
+            for idx, ch in enumerate(raw.channels):
+                if not any(keyword in ch.name for keyword in ["RSP", "RSPEC"]):
+                    continue
+
+                rsp_signal = ch.data
+                if len(rsp_signal) < 1000:  # 너무 짧은 채널 제외
+                    continue
+
+                # Cleaning & Features
+                methods_rsp = nk.rsp_methods(sampling_rate=sampling_rate)
+                rsp_cleaned = nk.rsp_clean(rsp_signal, sampling_rate=sampling_rate,
+                                           method=methods_rsp["method_cleaning"], **methods_rsp["kwargs_cleaning"])
+                peaks, info = nk.rsp_peaks(rsp_cleaned, sampling_rate=sampling_rate,
+                                           method=methods_rsp["method_peaks"], amplitude_min=0.1,
+                                           **methods_rsp["kwargs_peaks"])
+                info["sampling_rate"] = sampling_rate
+                amplitude = nk.rsp_amplitude(rsp_cleaned, peaks)
+                rate = signal_rate(info["RSP_Troughs"], sampling_rate=sampling_rate, desired_length=len(rsp_signal))
+                signals_rsp = pd.DataFrame({
+                    "RSP_Raw": rsp_signal,
+                    "RSP_Clean": rsp_cleaned,
+                    "RSP_Amplitude": amplitude,
+                    "RSP_Rate": rate
+                }).join(peaks)
+
+                # Quality check
+                metrics = detect_abnormal_rsp(signals_rsp.copy(), info, sampling_rate)
+                metrics.update({
+                    "Participant": participant,
+                    "File": file,
+                    "RSP_ChannelIndex": idx,
+                    "ChannelName": ch.name
+                })
+                append_log(pd.DataFrame([metrics]))
+
+                # Optional figure
+                if figure:
+                    nk.rsp_plot(signals_rsp, info)
+                    condition = file.split("_")[1].split(".")[0] if "_" in file else "Unknown"
+                    fig_name = f"{participant}_{condition}_Ch{idx}.png"
+                    fig_path = os.path.join(log_dir, "figs", fig_name)
+                    os.makedirs(os.path.dirname(fig_path), exist_ok=True)
+                    plt.savefig(fig_path)
+                    plt.close()
+
+                # Cleanup
+                del rsp_signal, rsp_cleaned, peaks, info, amplitude, rate, signals_rsp
+                gc.collect()
+
+        except Exception as e:
+            print(f"❌ Error with {file}: {e}")
+            continue

@@ -4,6 +4,8 @@ import subprocess
 ## run with `python batchrunner.py` in python environment.
 # === Configuration ===
 data_root = 'D:/LabRoom/Projects/SD Physiology/Processed/main'
+data_root = 'C:/Users/Jiyoon/OneDrive/HubRoom/Projects/SD physiology/Data/Preprocessing/RSP'
+
 batch_size = 30
 
 all_participants = sorted(os.listdir(data_root))
