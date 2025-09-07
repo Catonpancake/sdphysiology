@@ -13,6 +13,7 @@ def process_physiology_data(
     window_seconds=20,
     stride_seconds=2,
     sampling_rate=120,
+    scenename="Hallway"
 ):
     os.makedirs(output_path, exist_ok=True)
 
@@ -45,7 +46,7 @@ def process_physiology_data(
     for pid in tqdm(participants, desc="Processing"):
         try:
             df = pd.read_pickle(os.path.join(data_path, f"{pid}_Main.pkl"))
-            df = df[df["scene"] == "Outside"].dropna().reset_index(drop=True)
+            df = df[df["scene"] == scenename].dropna().reset_index(drop=True)
 
             if "pupilL" in df.columns and "pupilR" in df.columns:
                 df["pupil_mean"] = df[["pupilL", "pupilR"]].mean(axis=1)

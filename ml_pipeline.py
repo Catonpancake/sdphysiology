@@ -193,13 +193,14 @@ def train_and_evaluate_seeds(
 
     # ---------- 루프 준비 ----------
     all_train_losses, all_val_losses, all_test_scores = [], [], []
+    all_train_scores, all_val_scores = [], []
 
     for seed in range(num_seeds):
         print(f"\n🟢 SEED {seed} 시작\n")
         set_seed(seed)
 
         # ---- 학습 (best state가 적용된 model 반환 가정) ----
-        model, train_losses, val_losses, *_ = train_model(
+        model, train_losses, val_losses, val_r2, val_rmse, val_mae, train_idx, val_idx, train_r2, train_rmse, train_mae = train_model(
             X_trainval, y_trainval,
             params=_best_params,
             model_type=model_type,
@@ -208,11 +209,14 @@ def train_and_evaluate_seeds(
             pid_array=pid_trainval,
             return_curve=True,
             patience=patience,
-            min_delta=min_delta
+            min_delta=min_delta,
+            use_internal_split=True
         )
         # 커브 저장 (없으면 빈 리스트)
         all_train_losses.append(train_losses if train_losses is not None else [])
         all_val_losses.append(val_losses if val_losses is not None else [])
+        all_train_scores.append((float(train_r2), float(train_rmse), float(train_mae)))
+        all_val_scores.append((float(val_r2), float(val_rmse), float(val_mae)))
 
         # ---- 테스트용 fresh 모델 생성 & 가중치 로드 ----
         if mt == "CNN":
@@ -235,7 +239,7 @@ def train_and_evaluate_seeds(
             torch.cuda.empty_cache()
         gc.collect()
 
-    return all_train_losses, all_val_losses, all_test_scores
+    return all_train_losses, all_val_losses, all_test_scores, all_train_scores, all_val_scores
 
 
 

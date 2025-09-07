@@ -14,6 +14,7 @@ import seaborn as sns
 
 # --------------------- 기본 유틸 ---------------------
 def set_seed(seed=42):
+    seed = int(seed) 
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -335,8 +336,6 @@ def evaluate_and_save(
     print(f"📊 Test R²: {r2:.4f} | RMSE: {rmse:.4f} | MAE: {mae:.4f}  → saved to {filename}")
 
     return r2, rmse, mae, loss
-
-# --------------------- 학습 ---------------------
 def train_model(
     X, y, params, model_type="GRU",
     num_epochs=20, seed=42,
@@ -354,9 +353,43 @@ def train_model(
 ):
     """
     Drop-in replacement.
+
+    ✅ 변경 요약(로직 최소 변경):
+      - 학습 내부 동작은 그대로 유지
+      - 리턴 시 train/val 분할 인덱스를 함께 반환
+        * DataLoader의 sampler/dataset에 indices가 있을 때만 절대 인덱스 복구 가능
+        * 없으면 None 반환
+      - return_curve=True:
+            (model, train_losses, val_losses, val_r2, val_rmse, val_mae, train_indices, val_indices)
+        False:
+            (model, val_r2, val_rmse, val_mae, train_indices, val_indices)
     """
     import gc
-    from ml_utils import set_seed, create_dataloaders, to_loader, get_model, evaluate  # ✅ evaluate 임포트 추가
+    import torch
+    from ml_utils import set_seed, create_dataloaders, to_loader, get_model, evaluate  # ✅ evaluate 임포트 유지
+
+    def _get_indices_from_loader(loader):
+        """
+        가능한 경우, 원본 X 기준의 절대 인덱스를 복원.
+        - SubsetRandomSampler: loader.sampler.indices
+        - torch.utils.data.Subset: loader.dataset.indices
+        - 위가 없으면 None (외부에서 평가 시 None 처리)
+        """
+        idx = None
+        # (1) sampler.indices
+        if hasattr(loader, "sampler") and hasattr(loader.sampler, "indices"):
+            idx = loader.sampler.indices
+        # (2) dataset.indices (Subset)
+        elif hasattr(loader, "dataset") and hasattr(loader.dataset, "indices"):
+            idx = loader.dataset.indices
+        # numpy/torch 텐서로 정규화
+        if idx is not None:
+            try:
+                import numpy as np
+                idx = np.asarray(idx, dtype=int)
+            except Exception:
+                idx = None
+        return idx
 
     if deterministic:
         try:
@@ -413,6 +446,10 @@ def train_model(
         val_loader   = to_loader(X_val, y_val, model_type, batch_size=p["batch_size"], shuffle=False,
                                  input_channels=p.get("input_channels", None))
 
+    # 🔎 분할 인덱스(가능할 경우만) 확보
+    train_indices = _get_indices_from_loader(train_loader)
+    val_indices   = _get_indices_from_loader(val_loader)
+
     # --------- Model / Optim / Scheduler ---------
     model = get_model(model_type, input_size=input_size, params=p).to(device)
 
@@ -455,19 +492,14 @@ def train_model(
             X_batch = X_batch.to(device, non_blocking=True)
             y_batch = y_batch.to(device, non_blocking=True)
 
-            # ❌ 이중 permute 유발 가능 — 제거
-            # if model_type.upper() == "CNN":
-            #     if X_batch.dim() == 3 and X_batch.size(1) < X_batch.size(2):
-            #         X_batch = X_batch.permute(0, 2, 1)
-
             optimizer.zero_grad(set_to_none=True)
 
             with torch.cuda.amp.autocast(enabled=(amp and device.type == "cuda")):
                 preds = model(X_batch)
                 if preds.dim() == 2 and preds.size(-1) == 1:
-                    preds = preds.squeeze(-1)   # <- 마지막 축만 제거
-                preds   = preds.reshape(-1)      # 항상 (B,)
-                y_batch = y_batch.reshape(-1)    # 항상 (B,)
+                    preds = preds.squeeze(-1)
+                preds   = preds.reshape(-1)
+                y_batch = y_batch.reshape(-1)
                 loss = criterion(preds, y_batch)
 
             scaler.scale(loss).backward()
@@ -517,17 +549,36 @@ def train_model(
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    val_r2, val_rmse, val_mae, _, _, _ = evaluate(model, val_loader, device, model_type=model_type)
+    # ✅ 여기서 Train/Val 평가를 둘 다 수행
+    #    - train_loader는 shuffle=True여도 지표 계산에는 영향 없음 (평균/오차 기반)
+    train_r2, train_rmse, train_mae, _, _, _ = evaluate(
+        model, train_loader, device, model_type=model_type
+    )
+    val_r2, val_rmse, val_mae, _, _, _ = evaluate(
+        model, val_loader, device, model_type=model_type
+    )
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
 
+    # ✅ 리턴만 확장 (indices는 앞서 잡은 값; None일 수 있음)
     if return_curve:
-        return model, train_losses, val_losses, val_r2, val_rmse, val_mae
+        return (
+            model,                # 0
+            train_losses,         # 1
+            val_losses,           # 2
+            val_r2, val_rmse, val_mae,   # 3,4,5 (기존)
+            train_indices, val_indices,   # 6,7 (있으면 np.ndarray, 없으면 None)
+            train_r2, train_rmse, train_mae  # 8,9,10 🔥 추가
+        )
     else:
-        return model, val_r2, val_rmse, val_mae
-
+        return (
+            model,
+            val_r2, val_rmse, val_mae,
+            train_indices, val_indices,
+            train_r2, train_rmse, train_mae
+        )
 # --------------------- 기타 ---------------------
 def mask(X, y, pids, sel):
     m = np.isin(pids, sel)
@@ -583,7 +634,7 @@ def grid_search_model(
 
         for s in seed_list:
             try:
-                _, val_r2, val_rmse, val_mae = train_model(
+                *_, val_r2, val_rmse, val_mae = train_model(
                     X, y, {**param_dict, "input_size": X.shape[-1]},  # 🔒 input_size 보장
                     model_type=model_type,
                     num_epochs=num_epochs,
