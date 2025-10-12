@@ -114,6 +114,167 @@ def plot_ablation_results(df, title="Feature Ablation (Validation R²)"):
     plt.tight_layout()
     plt.show()
 
+def ensure_dir(p): os.makedirs(p, exist_ok=True)
+
+def summarize_split_scores(name, scores):
+    if scores is None or len(scores) == 0:
+        return {f"{name}_r2_mean": None, f"{name}_r2_std": None,
+                f"{name}_rmse_mean": None, f"{name}_rmse_std": None,
+                f"{name}_mae_mean": None, f"{name}_mae_std": None}
+    arr = np.array(scores, dtype=np.float64)
+    out = {
+        f"{name}_r2_mean": float(np.mean(arr[:,0])),
+        f"{name}_r2_std":  float(np.std(arr[:,0], ddof=1)) if len(arr)>1 else 0.0,
+        f"{name}_rmse_mean": float(np.mean(arr[:,1])),
+        f"{name}_rmse_std":  float(np.std(arr[:,1], ddof=1)) if len(arr)>1 else 0.0,
+        f"{name}_mae_mean": float(np.mean(arr[:,2])),
+        f"{name}_mae_std":  float(np.std(arr[:,2], ddof=1)) if len(arr)>1 else 0.0,
+    }
+    print(f"➡ {name.upper()}  R² {out[f'{name}_r2_mean']:.4f}±{out[f'{name}_r2_std']:.4f} | "
+          f"RMSE {out[f'{name}_rmse_mean']:.4f}±{out[f'{name}_rmse_std']:.4f} | "
+          f"MAE {out[f'{name}_mae_mean']:.4f}±{out[f'{name}_mae_std']:.4f}")
+    return out
+import csv
+
+def write_seed_metrics_csv(path_csv, all_train_scores, all_val_scores, test_scores):
+    S = max(len(all_train_scores or []), len(all_val_scores or []), len(test_scores or []))
+    with open(path_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(["seed","split","r2","rmse","mae"])
+        for i in range(S):
+            if all_train_scores and i < len(all_train_scores):
+                r2, rmse, mae = all_train_scores[i]; w.writerow([i,"train",f"{r2:.6f}",f"{rmse:.6f}",f"{mae:.6f}"])
+            if all_val_scores and i < len(all_val_scores):
+                r2, rmse, mae = all_val_scores[i];  w.writerow([i,"val",  f"{r2:.6f}",f"{rmse:.6f}",f"{mae:.6f}"])
+            if test_scores and i < len(test_scores):
+                r2, rmse, mae = test_scores[i];     w.writerow([i,"test", f"{r2:.6f}",f"{rmse:.6f}",f"{mae:.6f}"])
+                
+def count_lstm_params(input_size: int, hidden_size: int, num_layers: int) -> int:
+    """
+    Pytorch LSTM with bias: per layer params = 4*H*(I_or_H + H + 2)
+    (because i2h: 4H*(in), h2h: 4H*H, bias_ih:4H, bias_hh:4H)
+    First layer in_dim=I, subsequent layers in_dim=H.
+    """
+    total = 0
+    for layer in range(num_layers):
+        in_dim = input_size if layer == 0 else hidden_size
+        total += 4 * hidden_size * in_dim   # weight_ih
+        total += 4 * hidden_size * hidden_size  # weight_hh
+        total += 8 * hidden_size  # two biases
+    return total
+def make_masks_from_fixed_test(pid_arr, test_pid_list, val_ratio, seed):
+    all_pids = np.unique(pid_arr).tolist()
+    test_set = set(test_pid_list)
+    trainval_pids = [p for p in all_pids if p not in test_set]
+    rng = np.random.default_rng(seed)
+    n_val = max(1, int(round(len(trainval_pids) * val_ratio)))
+    val_pids = set(rng.choice(trainval_pids, size=n_val, replace=False).tolist())
+    train_pids = set([p for p in trainval_pids if p not in val_pids])
+    pid_arr = np.asarray(pid_arr)
+    test_mask  = np.isin(pid_arr, list(test_set))
+    val_mask   = np.isin(pid_arr, list(val_pids))
+    train_mask = np.isin(pid_arr, list(train_pids))
+    return train_mask, val_mask, test_mask
+
+def recipe_for(H:int, L:int, BASE_BATCH_SIZE=16):
+    if H <= 128:
+        lr, epochs = 1e-3, 400
+    elif H <= 256:
+        lr, epochs = 3e-4, 600
+    else:  # H >= 512
+        lr, epochs = 1e-4, 800
+    if L >= 2:
+        epochs += 200
+    return {"learning_rate": lr, "epochs": epochs, "batch_size": BASE_BATCH_SIZE}
+
+
+def center_from_train_split(y_tr, pid_tr, scene_tr):
+    y_tr = y_tr.astype(np.float32)
+    ps_mean, pid_mean = {}, {}
+    ps_keys = np.stack([pid_tr, scene_tr], axis=1)
+    for (k_pid, k_sc) in np.unique(ps_keys, axis=0):
+        m = (pid_tr == k_pid) & (scene_tr == k_sc)
+        ps_mean[(k_pid, k_sc)] = float(y_tr[m].mean()) if np.any(m) else np.nan
+    for k_pid in np.unique(pid_tr):
+        m = (pid_tr == k_pid)
+        pid_mean[k_pid] = float(y_tr[m].mean()) if np.any(m) else np.nan
+    global_mean = float(y_tr.mean()) if len(y_tr) else 0.0
+
+    def _mu(pid_i, sc_i):
+        m = ps_mean.get((pid_i, sc_i))
+        if m is None or np.isnan(m):
+            m = pid_mean.get(pid_i, global_mean)
+            if m is None or np.isnan(m):
+                m = global_mean
+        return m
+
+    def center_fn(y, pid, scene):
+        y = y.astype(np.float32)
+        mu = np.array([_mu(p, s) for p, s in zip(pid, scene)], dtype=np.float32)
+        return y - mu
+
+    return center_fn, {"global_mean": global_mean}
+
+def hv_mask_from_train_x(X_all, train_mask, q=0.30):
+    """
+    Train-derived HV mask (input-based, safer):
+    - Per-sample std over all time*channels
+    - Threshold: train q-quantile; apply unchanged to all splits
+    """
+    X_all = np.asarray(X_all, dtype=np.float32)
+    X_flat = X_all.reshape(X_all.shape[0], -1)
+    std_all = X_flat.std(axis=1)
+    thr = float(np.quantile(std_all[train_mask], q)) if np.any(train_mask) else 0.0
+    keep_all = std_all >= thr
+    return keep_all
+def hv_mask_from_train_y(y_all, pid_all, scene_all, train_mask, q=0.30):
+    """
+    Train-derived HV mask (target-based; leakage-safe since computed on TRAIN ONLY):
+    - abs deviation from (pid,scene) means on TRAIN; train q-quantile → threshold
+    - apply unchanged to all splits
+    """
+    y_all = y_all.astype(np.float32); p_all = pid_all; s_all = scene_all
+    y_tr = y_all[train_mask]; p_tr = p_all[train_mask]; s_tr = s_all[train_mask]
+    # (pid,scene) means from TRAIN
+    ps_mean = {}
+    ps_keys = np.stack([p_tr, s_tr], axis=1)
+    uniq_ps = np.unique(ps_keys, axis=0)
+    for k_pid, k_sc in uniq_ps:
+        m = (p_tr == k_pid) & (s_tr == k_sc)
+        ps_mean[(k_pid, k_sc)] = float(y_tr[m].mean()) if np.any(m) else np.nan
+    # pid means & global
+    pid_mean = {}
+    for k_pid in np.unique(p_tr):
+        m = (p_tr == k_pid)
+        pid_mean[k_pid] = float(y_tr[m].mean()) if np.any(m) else np.nan
+    global_mean = float(y_tr.mean()) if len(y_tr) else 0.0
+
+    def _mu(pid_i, sc_i):
+        m = ps_mean.get((pid_i, sc_i))
+        if m is None or np.isnan(m):
+            m = pid_mean.get(pid_i, global_mean)
+            if m is None or np.isnan(m):
+                m = global_mean
+        return m
+
+    abs_dev_tr = np.abs(y_tr - np.array([_mu(p, s) for p, s in zip(p_tr, s_tr)], dtype=np.float32))
+    thr = float(np.quantile(abs_dev_tr, q)) if len(abs_dev_tr) else 0.0
+
+    abs_dev_all = np.abs(y_all - np.array([_mu(p, s) for p, s in zip(p_all, s_all)], dtype=np.float32))
+    keep_all = abs_dev_all >= thr
+    return keep_all
+
+def apply_per_split_mask(X, y, pid, scene, widx, train_m, val_m, test_m, keep_all):
+    """Intersect split masks with keep_all and return split tuples."""
+    tr_idx = np.where(train_m & keep_all)[0]
+    va_idx = np.where(val_m & keep_all)[0]
+    te_idx = np.where(test_m & keep_all)[0]
+    return (X[tr_idx], y[tr_idx], pid[tr_idx], scene[tr_idx], widx[tr_idx]), \
+           (X[va_idx], y[va_idx], pid[va_idx], scene[va_idx], widx[va_idx]), \
+           (X[te_idx], y[te_idx], pid[te_idx], scene[te_idx], widx[te_idx])
+
+def assert_no_pid_overlap(pid_train, pid_test):
+    dup = set(pid_train.tolist()).intersection(set(pid_test.tolist()))
+    assert len(dup) == 0, f"PID overlap detected between train and test: {sorted(list(dup))[:10]}"
 # --------------------- 모델 생성 ---------------------
 MODEL_REGISTRY = {
     "CNN": CNNRegressor,
