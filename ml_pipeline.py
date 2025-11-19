@@ -92,7 +92,7 @@ def load_and_split_data(
 def run_ablation(X_train, y_train, pid_train, X_val, y_val, pid_val, feature_tag_list,
                  model_type="CNN", fixed_params=None, seed=42, num_epochs=10,
                  save_path="ablation_result.csv",
-                 patience=10, min_delta=1e-6   # ✅ 추가
+                 patience=10, min_delta=1e-6, criterion=torch.nn.MSELoss(reduction="mean")
                  ):
     df_result = run_feature_ablation(
         X_train, y_train, pid_train,
@@ -103,7 +103,8 @@ def run_ablation(X_train, y_train, pid_train, X_val, y_val, pid_val, feature_tag
         num_epochs=num_epochs,
         seed=seed,
         patience=patience,        # ✅ 전달
-        min_delta=min_delta       # ✅ 전달
+        min_delta=min_delta,       # ✅ 전달
+        criterion=criterion  # ✅ 추가
     )
     df_result.to_csv(save_path, index=False)
     print(f"✅ Ablation 결과 저장 완료 → {save_path}")
@@ -117,7 +118,7 @@ def run_grid_search(
     num_epochs=20,
     use_internal_split=False,        # ✅ 외부 val 고정 권장
     external_val_data=None,          # (X_val, y_val) 필수 when False
-    patience=10, min_delta=1e-6,
+    patience=10, min_delta=1e-6, criterion=torch.nn.MSELoss(reduction="mean"),
     **kwargs
 ):
     if use_internal_split is False and external_val_data is None:
@@ -131,7 +132,7 @@ def run_grid_search(
         seed_list=seed_list,                 # ✅ 전달
         use_internal_split=use_internal_split,
         external_val_data=external_val_data, # ✅ 전달
-        patience=patience, min_delta=min_delta,
+        patience=patience, min_delta=min_delta, criterion=criterion,
         **kwargs
     )
     print("✅ Grid Search 완료!")
@@ -144,7 +145,13 @@ def train_and_evaluate_seeds(
     model_type, best_params,
     device,
     num_seeds=10, num_epochs=20,
-    patience=3, min_delta=1e-3
+    patience=3, min_delta=1e-3,
+    use_internal_split=True,             # ✅ 추가
+    external_val_data=None,              # ✅ (X_val, y_val) 튜플 또는 None
+    deterministic=True,                   # ✅ 선택: 결정성 제어
+    criterion=torch.nn.MSELoss(reduction="mean"),
+    internal_split_mode="train_val",      # {"train_val","train_only","train_val_test"}
+    internal_val_ratio=0.20,
 ):
     """
     Seed 앙상블 학습/평가 함수 (CNN, GRU/LSTM 등 공용).
@@ -210,7 +217,12 @@ def train_and_evaluate_seeds(
             return_curve=True,
             patience=patience,
             min_delta=min_delta,
-            use_internal_split=True
+            use_internal_split=use_internal_split,     # ✅ 바깥 인자 그대로 전달
+            external_val_data=external_val_data,       # ✅ 바깥 인자 그대로 전달
+            deterministic=deterministic,                # ✅ 선택
+            criterion=criterion,                          # ✅ 추가
+            internal_split_mode=internal_split_mode,      # ✅ 내부 모드/비율 전달
+            internal_val_ratio=internal_val_ratio,
         )
         # 커브 저장 (없으면 빈 리스트)
         all_train_losses.append(train_losses if train_losses is not None else [])

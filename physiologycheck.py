@@ -127,7 +127,156 @@ def detect_abnormal_rsp(signals_rsp, info_rsp, sampling_rate):
         "rsp_quality_score": rsp_quality,
         "exclude_flag_rsp": exclude_rsp
     }
+import numpy as np
+import pandas as pd
 
+def detect_abnormal_rsp_patch(data_or_signals, sampling_rate, info=None, min_troughs=3, rate_bounds=(8, 25)):
+    """
+    RSP 품질/이상 여부 진단 함수 (단일 DF 입력 지원 + 과거 인터페이스 호환)
+
+    Parameters
+    ----------
+    data_or_signals : pd.DataFrame | dict
+        - 권장: RSP 관련 모든 컬럼을 가진 DataFrame (예: RSP_Amplitude, RSP_Rate, RSP_Troughs 등)
+        - 과거 호환: signals_rsp(dict/DF) 를 넣고 info는 별도 dict로 전달
+    sampling_rate : float
+        샘플링 레이트 (Hz)
+    info : dict | None
+        과거 방식에서의 info_rsp (예: {"RSP_Troughs": [...]})
+    min_troughs : int
+        최소 트러프 개수 기준
+    rate_bounds : (low, high)
+        비정상 호흡수 판정 기준 (bpm): 기본 (8, 25)
+
+    Returns
+    -------
+    dict
+        진단 결과 딕셔너리
+    """
+
+    # ---- 헬퍼: 객체에서 안전하게 컬럼/키를 Series/ndarray로 뽑기 ----
+    def _get_series(obj, key):
+        if obj is None:
+            return None
+        if isinstance(obj, pd.DataFrame):
+            return obj[key] if key in obj.columns else None
+        if isinstance(obj, dict):
+            v = obj.get(key, None)
+            if isinstance(v, pd.Series):
+                return v
+            if isinstance(v, (list, np.ndarray)):
+                return pd.Series(v)
+            if v is not None and np.isscalar(v):
+                return pd.Series([v])
+        return None
+
+    # ---- 입력 해석: 단일 DF/딕셔너리 또는 과거 signals+info 구성 모두 지원 ----
+    # 단일 DF 혹은 dict가 들어온 경우 -> data로 쓰고, info는 같은 곳에서 추출 시도
+    data = data_or_signals
+    info_obj = info
+
+    # troughs: info 우선, 없으면 data에서 추출
+    troughs_ser = _get_series(info_obj, "RSP_Troughs")
+    if troughs_ser is None:
+        troughs_ser = _get_series(data, "RSP_Troughs")
+
+    if troughs_ser is not None:
+        # 결측/음수/범위 밖 제거 + int 캐스팅
+        arr = troughs_ser.to_numpy().astype(float)
+
+        # case 1: 0/1 mask → 인덱스로 변환
+        unique_vals = set(np.nan_to_num(arr, nan=0.0))
+        if len(arr) == len(data) and unique_vals.issubset({0.0, 1.0}):
+            troughs = np.flatnonzero(arr).tolist()
+
+        # case 2: 인덱스 리스트 형태(예전 방식) → 그대로 사용
+        else:
+            troughs = troughs_ser.dropna().astype(int).tolist()
+        if isinstance(data, pd.DataFrame):
+            n = len(data)
+            troughs = [t for t in troughs if 0 <= t < n]
+        else:
+            troughs = [t for t in troughs if t >= 0]
+    else:
+        troughs = []
+
+    # intervals (sec)
+    if len(troughs) > 1:
+        intervals = np.diff(troughs) / float(sampling_rate)
+    else:
+        intervals = np.array([np.nan], dtype=float)
+
+    # amplitude: 데이터에서 직접 추출 (권장 경로)
+    amp_ser = _get_series(data, "RSP_Amplitude")
+    if amp_ser is not None and len(troughs) > 0:
+        valid_idx = [t for t in troughs if 0 <= t < len(amp_ser)]
+        amplitudes = amp_ser.iloc[valid_idx].dropna().to_numpy()
+        amplitudes = amplitudes[amplitudes > 0] if amplitudes.size > 0 else np.array([np.nan])
+    else:
+        amplitudes = np.array([np.nan], dtype=float)
+
+    # --- CV 계산 (interval / amplitude) ---
+    mean_int = np.nanmean(intervals); std_int = np.nanstd(intervals)
+    cv_int = (std_int / mean_int) if (np.isfinite(mean_int) and mean_int != 0) else np.nan
+
+    mean_amp = np.nanmean(amplitudes); std_amp = np.nanstd(amplitudes)
+    cv_amp = (std_amp / mean_amp) if (np.isfinite(mean_amp) and mean_amp != 0) else np.nan
+
+    # 품질 점수 (엄격/완화)
+    if np.isfinite(cv_int) and np.isfinite(cv_amp):
+        rsp_quality_strict = 1.0 - float((cv_int + cv_amp) / 2.0)
+    else:
+        rsp_quality_strict = 0.0
+    rsp_quality_strict = max(0.0, rsp_quality_strict)
+
+    vals = [v for v in [cv_int, cv_amp] if np.isfinite(v)]
+    rsp_quality_relaxed = (1.0 - float(np.mean(vals))) if len(vals) > 0 else np.nan
+    if np.isfinite(rsp_quality_relaxed):
+        rsp_quality_relaxed = max(0.0, rsp_quality_relaxed)
+
+    # --- rate 기반 비정상 비율 ---
+    rate_ser = _get_series(data, "RSP_Rate")
+    low, high = rate_bounds
+    if rate_ser is not None and len(rate_ser) > 0:
+        rate_arr = np.asarray(rate_ser, dtype=float)
+        # 결측/비유한 제거는 분모 반영 위해 False 처리 (이상 비율 계산 시 NaN은 제외)
+        valid = np.isfinite(rate_arr)
+        if valid.any():
+            denom = valid.sum()
+            abnormal_rsp_ratio = float(((rate_arr[valid] < low) | (rate_arr[valid] > high)).sum() / denom)
+            mean_rsp_rate = float(np.nanmean(rate_arr))
+            std_rsp_rate  = float(np.nanstd(rate_arr))
+        else:
+            abnormal_rsp_ratio = 1.0
+            mean_rsp_rate = 0.0
+            std_rsp_rate  = 0.0
+    else:
+        # rate가 없을 때는 보수적으로 이상으로 둠
+        abnormal_rsp_ratio = 1.0
+        mean_rsp_rate = 0.0
+        std_rsp_rate  = 0.0
+
+    # --- 플래그 & exclude ---
+    flag_low_quality = (rsp_quality_strict < 0.3)   # 배제 판단은 엄격판
+    flag_rate_out    = (abnormal_rsp_ratio > 0.40)
+    flag_trough_fail = (len(troughs) < min_troughs)
+
+    exclude_rsp = (flag_low_quality or flag_rate_out)
+
+    return {
+        "mean_rsp_rate": float(mean_rsp_rate),
+        "std_rsp_rate": float(std_rsp_rate),
+        "abnormal_rsp_ratio": float(abnormal_rsp_ratio),
+        "rsp_quality_strict": float(rsp_quality_strict),   # 배제 판단용
+        "rsp_quality_relaxed": float(rsp_quality_relaxed) if np.isfinite(rsp_quality_relaxed) else np.nan,
+        "cv_interval": float(cv_int) if np.isfinite(cv_int) else np.nan,
+        "cv_amplitude": float(cv_amp) if np.isfinite(cv_amp) else np.nan,
+        "n_troughs": int(len(troughs)),
+        "flag_low_quality": bool(flag_low_quality),
+        "flag_rate_out": bool(flag_rate_out),
+        "flag_trough_fail": bool(flag_trough_fail),
+        "exclude_flag_rsp": bool(exclude_rsp),
+    }
 
 
 # 파일 존재 여부에 따라 header 저장 여부 설정
