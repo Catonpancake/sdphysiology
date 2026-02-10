@@ -128,140 +128,6 @@ def _welch_bandpowers_fft(x: np.ndarray, fs: float, bands: list[tuple[float,floa
         res[tag] = float(np.sum(psd[m]))
     return res, total
 
-# def process_physiology_data(
-#     data_path,
-#     output_path="./ml_processed",
-#     window_seconds=20,
-#     stride_seconds=2,
-#     sampling_rate=120,
-#     scenename="Hallway"
-    
-# ):
-#     os.makedirs(output_path, exist_ok=True)
-
-#     window_size = sampling_rate * window_seconds
-#     stride_size = sampling_rate * stride_seconds
-
-#     valid_cols = {
-#         "EDA": ["EDA_Tonic", "EDA_Phasic", "SCR_Amplitude", "SCR_RiseTime"],
-#         "PPG": ["PPG_Rate"],
-#         "RSP": ["RSP_Rate", "RSP_RVT", "RSP_Amplitude"],
-#         "Pupil": ["pupilL", "pupilR", "pupil_mean"]
-#     }
-
-#     clip_dict = {
-#         "EDA_Tonic": 30, "EDA_Phasic": 10, "SCR_Amplitude": 10, "SCR_RiseTime": 10,
-#         "PPG_Rate": 5, "RSP_Rate": 5, "RSP_RVT": 7, "RSP_Amplitude": 10,
-#         "pupilL": 10, "pupilR": 10, "pupil_mean": 10
-#     }
-
-#     participants = sorted([f.split("_")[0] for f in os.listdir(data_path) if f.endswith("_Main.pkl")])
-
-#     baseline_dict = {}
-#     anxiety_baseline_dict = {}
-#     all_features = []
-#     X_array = []
-#     y_array = []
-#     pid_array = []
-#     feature_tag_list = []
-
-#     for pid in tqdm(participants, desc="Processing"):
-#         try:
-#             df = pd.read_pickle(os.path.join(data_path, f"{pid}_Main.pkl"))
-#             df = df[df["scene"] == scenename].dropna().reset_index(drop=True)
-
-#             if "pupilL" in df.columns and "pupilR" in df.columns:
-#                 df["pupil_mean"] = df[["pupilL", "pupilR"]].mean(axis=1)
-
-#             base = df.iloc[:sampling_rate * 10]
-#             baseline_dict[pid] = {
-#                 col: (base[col].mean(), base[col].std() if base[col].std() > 1e-6 else 1.0)
-#                 for mod, cols in valid_cols.items() for col in cols if col in base.columns
-#             }
-
-#             if "anxiety" in base.columns:
-#                 mean = base["anxiety"].mean()
-#                 std = base["anxiety"].std()
-#                 anxiety_baseline_dict[pid] = (mean, std if std > 0.5 else 1.0)
-
-#             for start in range(0, len(df) - window_size + 1, stride_size):
-#                 window = df.iloc[start:start + window_size].copy()
-#                 if len(window) < window_size:
-#                     continue
-
-#                 norm_window = window.copy()
-#                 for mod, cols in valid_cols.items():
-#                     for col in cols:
-#                         if col in norm_window.columns and col in baseline_dict[pid]:
-#                             mean, std = baseline_dict[pid][col]
-#                             norm_window[col] = (norm_window[col] - mean) / std
-
-#                 if "PPG_Clean" in norm_window.columns:
-#                     quality = nk.ppg_quality(norm_window["PPG_Clean"].values, sampling_rate=sampling_rate)
-#                     if np.nanmean(quality) < 0.5:
-#                         continue
-
-#                 try:
-#                     peaks = np.where(window["PPG_Peaks"].values == 1)[0]
-#                     if len(peaks) >= 4:
-#                         ibi = np.diff(peaks) / sampling_rate
-#                         cv = np.std(ibi) / np.mean(ibi)
-#                         if cv > 0.5:
-#                             raise ValueError(f"High HRV CV: {cv:.2f}")
-#                         hrv = nk.hrv_time(peaks, sampling_rate=sampling_rate, show=False, method="time")
-#                         hrv_features = hrv[["HRV_RMSSD", "HRV_SDNN", "HRV_pNN50"]].iloc[0].to_dict()
-#                     else:
-#                         hrv_features = {"HRV_RMSSD": np.nan, "HRV_SDNN": np.nan, "HRV_pNN50": np.nan}
-#                 except Exception:
-#                     hrv_features = {"HRV_RMSSD": np.nan, "HRV_SDNN": np.nan, "HRV_pNN50": np.nan}
-
-#                 row = {"participant": pid, "start_idx": start}
-#                 if "anxiety" in window.columns and pid in anxiety_baseline_dict:
-#                     mean, std = anxiety_baseline_dict[pid]
-#                     z_scored = (window["anxiety"] - mean) / std
-#                     row["anxiety"] = z_scored.mean()
-#                     y_array.append(z_scored.mean())
-
-#                 feature_sequence = []
-#                 feature_tags = []
-
-#                 for mod, cols in valid_cols.items():
-#                     for col in cols:
-#                         if col in norm_window.columns:
-#                             clipped = norm_window[col].clip(-clip_dict[col], clip_dict[col])
-#                             row[f"{col}_mean"] = clipped.mean()
-#                             row[f"{col}_std"] = clipped.std()
-#                             row[f"{col}_max"] = clipped.max()
-#                             row[f"{col}_slope"] = np.polyfit(np.arange(len(clipped)), clipped, 1)[0]
-#                             feature_sequence.append(clipped.values)
-#                             feature_tags.append(f"{col}")
-
-#                 if feature_sequence:
-#                     X_array.append(np.stack(feature_sequence, axis=1))  # [T, C]
-#                     pid_array.append(pid)
-#                     feature_tag_list.append(feature_tags)
-
-#                 row.update(hrv_features)
-#                 all_features.append(row)
-
-#         except Exception as e:
-#             print(f"[{pid}] 전체 처리 오류: {e}")
-#             continue
-
-#     df_feat = pd.DataFrame(all_features)
-#     X_array = np.array(X_array)
-#     y_array = np.array(y_array)
-#     pid_array = np.array(pid_array)
-#     feature_tag_list = feature_tag_list[0] if feature_tag_list else []
-
-#     np.save(os.path.join(output_path, "X_array.npy"), X_array)
-#     np.save(os.path.join(output_path, "y_array.npy"), y_array)
-#     np.save(os.path.join(output_path, "pid_array.npy"), pid_array)
-#     np.save(os.path.join(output_path, "feature_tag_list.npy"), feature_tag_list)
-#     df_feat.to_csv(os.path.join(output_path, "df_feat.csv"), index=False)
-
-#     print("✅ 저장 완료:", output_path)
-#     print(f"📊 X shape: {X_array.shape} | y shape: {y_array.shape} | feature dim: {len(feature_tag_list)}")
 def process_physiology_data(
     data_path,
     output_path="./ml_processed",
@@ -1065,321 +931,8 @@ def extract_raw_physio_windows(
     print(f"📊 X shape: {X_array.shape} | y shape: {y_array.shape} | #PIDs: {len(np.unique(pid_array))}")
     print(f"🧩 Channels: {X_array.shape[1]} | (예: {feature_tags[:min(10,len(feature_tags))]})")
     print("📝 saved: scene_array.npy, windex_array.npy, feature_tag_list.npy" + (", meta.json" if save_meta else ""))
-
-# def extract_raw_physio_windows(
-#     data_path: str,
-#     output_path: str = "./ml_processed_raw",
-#     window_seconds: int = 5,     # 권장: 5초
-#     stride_seconds: int = 5,     # 권장: 5초 (겹침 없음)
-#     sampling_rate: int = 120,
-#     scenes="Outside",            # None=전체, str 또는 list[str]
-#     original_hz: int = 120,      # 원본 저장 주파수(기본 120Hz로 가정)
-#     save_meta: bool = True,
-#     # ---- (신규) 타깃 스무딩 옵션 (6) ----
-#     enable_target_smoothing: bool = False,
-#     target_smoothing_method: str = "ema",  # "ema" | "median"
-#     target_smoothing_steps: int = 3,       # 3~5 권장 (샘플 단위; 120Hz면 3=25ms*3가 아님에 유의, 다운샘플 후 기준)
-#     smooth_before_zscore: bool = True,
-#     # ---- (신규) 피처 확장 옵션 (4) ----
-#     enable_feature_expansion: bool = False,
-#     fe_diff_orders=(1, 2),                 # 1차, 2차 차분 채널 추가
-#     fe_ma_seconds=(2,),                    # 이동평균 초 단위 리스트 (예: (2,5))
-#     fe_std_seconds=(5,),                   # 이동표준편차 초 단위 리스트
-#     fe_enable_slope=True,                  # 창 전체 기울기 채널(상수채널)
-#     fe_enable_iqr=True,                    # 창 전체 IQR 채널(상수채널)
-#     fe_enable_band_energy=True,            # FFT 대역 에너지 채널(상수채널)
-#     # ==== ✅ 신규: 저역 번들 옵션 ====
-#     fe_enable_lowfreq_bundle: bool = False,  # 기본 OFF
-#     fe_lowfreq_hop_seconds: float = None,    # None이면 stride_seconds로 간주
-#     fe_lowfreq_targets: tuple = ("EDA_Tonic","EDA_Phasic","PPG_Rate","RSP_Rate","pupilL"),
-#     fe_lowfreq_spec: dict = None,  # {"ema_taus":[10.0], "slope_secs":[10.0], "use_bandpower": False}
-#     lf_ema_seconds: tuple = (10,),      # τ(s) 리스트 (예: (6,10,20))
-#     lf_slope_seconds: tuple = (10,),    # Rolling slope 창 길이(sec)
-#     # Nyquist=0.5*sampling_rate 기준으로 설정. hop=2s → fs=0.5Hz면 Nyq=0.25
-#     lf_bands: tuple = ((0.00, 0.02, "LF"), (0.02, 0.08, "MF"), (0.08, 0.20, "HF")),
-# ):
-#     """
-#     - 입력 폴더의 {pid}_Main.pkl 로부터 scene별로 원시 신호를 윈도잉.
-#     - 출력: X_array [N,C,T], y_array [N], pid_array [N], scene_array [N], windex_array [N]
-#     - feature_tag_list.npy: 사용된 채널 이름
-#     - meta.json: 파라미터/요약 정보(옵션)
-
-#     변경점:
-#       • enable_target_smoothing: True면 y에 EMA/Median 필터 적용 (노이즈 완화)
-#       • enable_feature_expansion: True면 각 채널에 시계열 파생/상수 특성 채널 추가
-#         - 차분(1,2), 이동평균/표준편차, slope, IQR, FFT 대역에너지
-#     """
-#     os.makedirs(output_path, exist_ok=True)
-
-#     # 윈도/스트라이드 샘플 수
-#     window_size = int(window_seconds * sampling_rate)
-#     stride_size = int(stride_seconds * sampling_rate)
-
-#     # 사용 신호 컬럼 (파생 피처 위주)
-#     signal_dict = {
-#         "EDA":   ["EDA_Tonic", "EDA_Phasic", "SCR_Amplitude", "SCR_RiseTime"],
-#         "PPG":   ["PPG_Rate"],  # HRV 주파수대역은 RR이 없으므로 PPG_Rate로 근사(주의)
-#         "RSP":   ["RSP_Rate", "RSP_RVT", "RSP_Amplitude"],
-#         "Pupil": ["pupilL", "pupilR", "pupil_mean"],
-#     }
-#     base_cols = sum(signal_dict.values(), [])  # 평탄화
-
-#     # 스펙트럼 대역 정의 (모달리티별 권장치)
-#     # - EDA tonic: 0–0.4Hz
-#     # - RSP band: 0.2–0.5Hz
-#     # - HRV 근사(LF/HF): 0.04–0.15, 0.15–0.4 (PPG_Rate 기반 근사)
-#     band_map = {
-#         "EDA_Tonic": [(0.0, 0.4, "EDA_0_0.4")],
-#         "RSP_Rate":  [(0.2, 0.5, "RSP_0.2_0.5")],
-#         "RSP_RVT":   [(0.2, 0.5, "RSP_0.2_0.5")],
-#         "RSP_Amplitude": [(0.2, 0.5, "RSP_0.2_0.5")],
-#         "PPG_Rate":  [(0.04, 0.15, "HRV_LF_approx"),
-#                       (0.15, 0.40, "HRV_HF_approx")],
-#         # pupil은 스펙트럼 기본 OFF (원하면 추가)
-#     }
-
-#     # 참가자 목록
-#     participants = sorted([f.split("_")[0] for f in os.listdir(data_path) if f.endswith("_Main.pkl")])
-
-#     # 결과 리스트
-#     X_list, y_list, pid_list = [], [], []
-#     scene_list, windex_list = [], []
-
-#     # scenes 인자 정규화
-#     if scenes is None:
-#         scenes_set = None  # 모든 scene 허용
-#     elif isinstance(scenes, str):
-#         scenes_set = {scenes}
-#     else:
-#         scenes_set = set(scenes)
-
-#     # 롤링 커널 크기 (샘플 단위) 준비
-#     ma_ks = [max(1, int(round(s * sampling_rate))) for s in fe_ma_seconds]
-#     std_ks = [max(1, int(round(s * sampling_rate))) for s in fe_std_seconds]
-
-#     for pid in tqdm(participants, desc="Extracting Raw Signals"):
-#         try:
-#             df = pd.read_pickle(os.path.join(data_path, f"{pid}_Main.pkl"))
-
-#             if 'scene' not in df.columns:
-#                 df['scene'] = 'unknown'
-
-#             # scene 필터링
-#             if scenes_set is None:
-#                 df_scene_all = df.copy()
-#             else:
-#                 df_scene_all = df[df['scene'].isin(scenes_set)].copy()
-
-#             if df_scene_all.empty or "anxiety" not in df_scene_all.columns:
-#                 continue
-
-#             # pupil_mean 생성 (없으면)
-#             if "pupil_mean" not in df_scene_all.columns and {"pupilL", "pupilR"}.issubset(df_scene_all.columns):
-#                 df_scene_all["pupil_mean"] = df_scene_all[["pupilL", "pupilR"]].mean(axis=1)
-
-#             # 필요한 컬럼만 유지 + 결측 제거 (scene 포함)
-#             keep_cols = ["scene", "anxiety"] + [c for c in base_cols if c in df_scene_all.columns]
-#             df_scene_all = df_scene_all[keep_cols].dropna().reset_index(drop=True)
-#             if len(df_scene_all) < window_size:
-#                 continue
-
-#             # 다운샘플 (필요 시)
-#             if sampling_rate < original_hz:
-#                 df_scene_all = interpolate_downsample(
-#                     df_scene_all, target_hz=sampling_rate, original_hz=original_hz
-#                 )
-
-#             # ---- 타깃 스무딩(옵션) ----
-#             anxiety_raw = df_scene_all["anxiety"].to_numpy().astype(np.float32)
-#             if enable_target_smoothing:
-#                 k = max(1, int(target_smoothing_steps))
-#                 if target_smoothing_method.lower() == "median":
-#                     # 간단 median filter (길이 k, 홀수 강제)
-#                     if k % 2 == 0: k += 1
-#                     pad = k // 2
-#                     xp = np.pad(anxiety_raw, (pad, pad), mode="reflect")
-#                     sm = np.array([np.median(xp[i:i+k]) for i in range(len(xp)-k+1)], dtype=np.float32)
-#                 else:
-#                     # EMA
-#                     alpha = 2.0 / (k + 1.0)
-#                     sm = np.empty_like(anxiety_raw)
-#                     acc = anxiety_raw[0]
-#                     for i, v in enumerate(anxiety_raw):
-#                         acc = alpha * v + (1 - alpha) * acc
-#                         sm[i] = acc
-#                 anxiety_for_norm = sm if smooth_before_zscore else anxiety_raw
-#             else:
-#                 anxiety_for_norm = anxiety_raw
-
-#             # Z-score (씬 필터 후 전체 구간 기준)
-#             a_mean, a_std = np.nanmean(anxiety_for_norm), np.nanstd(anxiety_for_norm)
-#             a_std = a_std if a_std > 1e-6 else 1.0
-#             anxiety_z = (anxiety_for_norm - a_mean) / a_std
-
-#             # 모든 신호 컬럼 존재 확인(정책 유지: 전부 있어야 진행)
-#             present_cols = [c for c in base_cols if c in df_scene_all.columns]
-#             if len(present_cols) != len(base_cols):
-#                 continue
-
-#             # 참가자×scene별 윈도 인덱스 카운터
-#             widx_counter = defaultdict(int)
-
-#             n = len(df_scene_all)
-#             scene_series = df_scene_all['scene'].to_numpy()
-
-#             # 원본 시계열 캐시
-#             series_map = {c: df_scene_all[c].to_numpy().astype(np.float32) for c in present_cols}
-
-#             for start in range(0, n - window_size + 1, stride_size):
-#                 end = start + window_size
-
-#                 # scene 경계 안전: 창 내부에 서로 다른 scene이 섞이면 스킵
-#                 window_scenes = scene_series[start:end]
-#                 if np.any(window_scenes != window_scenes[0]):
-#                     continue
-#                 sc_name = str(window_scenes[0])
-
-#                 channel_data = []
-#                 channel_tags = []
-
-#                 # ---- 채널별 표준화 이전에 파생 생성 (윈도 내부에서 z-score 적용) ----
-#                 for col in present_cols:
-#                     seg = series_map[col][start:end]  # 원본 창 (float32)
-
-#                     # 기본 채널: seg (나중에 z-score)
-#                     candidates = [(seg, col)]
-
-#                     if enable_feature_expansion:
-#                         # 1) 1·2차 차분 (길이 보존 위해 앞값 보간)
-#                         for od in fe_diff_orders:
-#                             d = _diff(seg, order=od)
-#                             candidates.append((d, f"{col}_diff{od}"))
-
-#                         # 2) 이동평균 / 이동표준편차 (길이 동일)
-#                         for k in ma_ks:
-#                             ma = _rolling_mean(seg, k)
-#                             candidates.append((ma, f"{col}_ma{k}"))
-#                         for k in std_ks:
-#                             rs = _rolling_std(seg, k)
-#                             candidates.append((rs, f"{col}_std{k}"))
-
-#                         # 3) slope / IQR / band energy → 스칼라 → 상수 채널로 확장
-#                         if fe_enable_slope:
-#                             s = _slope_whole_window(seg)
-#                             candidates.append((np.full_like(seg, s), f"{col}_slope"))
-#                         if fe_enable_iqr:
-#                             q = _iqr_whole_window(seg)
-#                             candidates.append((np.full_like(seg, q), f"{col}_iqr"))
-#                         if fe_enable_band_energy and col in band_map:
-#                             for (flo, fhi, tag) in band_map[col]:
-#                                 be = _band_energy_fft(seg, sampling_rate, flo, fhi)
-#                                 candidates.append((np.full_like(seg, be), f"{col}_{tag}"))
-#                         # === [PATCH 3/3] 저역 번들 (hop=2s 기준, 밴드파워 OFF 기본) ===================
-#                         if fe_enable_lowfreq_bundle:
-#                             # 3-1) hop seconds 결정: 지정 없으면 stride_seconds 그대로 사용
-#                             _hop_sec = float(fe_lowfreq_hop_seconds) if fe_lowfreq_hop_seconds is not None else float(stride_seconds)
-
-#                             # 3-2) 대상 컬럼만 적용 (존재하는 컬럼일 때만)
-#                             apply_lowfreq = (col in fe_lowfreq_targets)
-
-#                             # 3-3) spec 기본값
-#                             _spec = dict(ema_taus=[10.0], slope_secs=[10.0], use_bandpower=False)
-#                             if isinstance(fe_lowfreq_spec, dict):
-#                                 _spec.update(fe_lowfreq_spec)
-
-#                             if apply_lowfreq:
-#                                 # (A) EMA(τ in seconds) : causal, hop기반
-#                                 for tau in _spec.get("ema_taus", []) or []:
-#                                     ema = _ema_causal_hop(seg, hop_seconds=_hop_sec, tau_seconds=float(tau))
-#                                     candidates.append((ema.astype(np.float32), f"{col}__LF_EMA_{int(round(tau))}s"))
-
-#                                 # (B) Rolling slope(window seconds) : causal, per-second slope
-#                                 for wsec in _spec.get("slope_secs", []) or []:
-#                                     rs = _rolling_slope_causal_hop(seg, hop_seconds=_hop_sec, window_seconds=float(wsec))
-#                                     candidates.append((rs.astype(np.float32), f"{col}__LF_RSLOPE_{int(round(wsec))}s"))
-
-#                                 # (C) 밴드파워/비율은 안전판에선 OFF (원하면 True로)
-#                                 if bool(_spec.get("use_bandpower", False)):
-#                                     # 밴드파워를 쓰는 경우라도 'fs_eff = 1/hop' 이어야 함.
-#                                     # 구현은 의도적으로 생략: 초기 검증은 EMA/RSlope 2개만 권장.
-#                                     pass
-#                         # ================================================================================
-
-#                     # 후보들을 각자 윈도 내 z-score 후 추가
-#                     for arr, tag in candidates:
-#                         m = float(arr.mean())
-#                         s = float(arr.std())
-#                         s = s if s > 1e-6 else 1.0
-#                         channel_data.append(((arr - m) / s).astype(np.float32))
-#                         channel_tags.append(tag)
-
-#                 X = np.stack(channel_data, axis=0)     # [C, T]
-#                 y = anxiety_z[start:end].mean()        # window 평균 anxiety (z)
-
-#                 # 메타 기록
-#                 widx = widx_counter[(pid, sc_name)]
-#                 widx_counter[(pid, sc_name)] += 1
-
-#                 X_list.append(X)
-#                 y_list.append(y)
-#                 pid_list.append(pid)
-#                 scene_list.append(sc_name)
-#                 windex_list.append(widx)
-
-#         except Exception as e:
-#             print(f"[{pid}] 처리 실패: {e}")
-#             continue
-
-#     if len(X_list) == 0:
-#         print("⚠️ 생성된 윈도우가 없습니다. scene 필터/컬럼 존재 여부를 확인하세요.")
-#         return
-
-#     X_array = np.asarray(X_list, dtype=np.float32)         # [N, C, T]
-#     y_array = np.asarray(y_list, dtype=np.float32)         # [N]
-#     pid_array = np.asarray(pid_list)                       # [N]
-#     scene_array = np.asarray(scene_list)                   # [N]
-#     windex_array = np.asarray(windex_list, dtype=np.int32) # [N]
-
-#     # feature_tag_list: 마지막 윈도에서의 channel_tags 사용 (모든 창 동일 구성 가정)
-#     feature_tags = np.array(channel_tags, dtype="U128")
-
-#     np.save(os.path.join(output_path, "X_array.npy"), X_array)
-#     np.save(os.path.join(output_path, "y_array.npy"), y_array)
-#     np.save(os.path.join(output_path, "pid_array.npy"), pid_array)
-#     np.save(os.path.join(output_path, "scene_array.npy"), scene_array)
-#     np.save(os.path.join(output_path, "windex_array.npy"), windex_array)
-#     np.save(os.path.join(output_path, "feature_tag_list.npy"), feature_tags)
-
-#     if save_meta:
-#         meta = {
-#             "sampling_rate": sampling_rate,
-#             "original_hz": original_hz,
-#             "window_seconds": window_seconds,
-#             "stride_seconds": stride_seconds,
-#             "scenes": list(scenes_set) if scenes_set is not None else "ALL",
-#             "n_windows": int(len(X_array)),
-#             "n_participants": int(len(np.unique(pid_array))),
-#             "enable_target_smoothing": enable_target_smoothing,
-#             "target_smoothing_method": target_smoothing_method,
-#             "target_smoothing_steps": int(target_smoothing_steps),
-#             "smooth_before_zscore": smooth_before_zscore,
-#             "enable_feature_expansion": enable_feature_expansion,
-#             "fe_diff_orders": list(fe_diff_orders),
-#             "fe_ma_seconds": list(fe_ma_seconds),
-#             "fe_std_seconds": list(fe_std_seconds),
-#             "fe_enable_slope": fe_enable_slope,
-#             "fe_enable_iqr": fe_enable_iqr,
-#             "fe_enable_band_energy": fe_enable_band_energy,
-#             "feature_cols_base": base_cols,
-#             "feature_cols_final": feature_tags.tolist()
-#         }
-#         with open(os.path.join(output_path, "meta.json"), "w", encoding="utf-8") as f:
-#             json.dump(meta, f, ensure_ascii=False, indent=2)
-
-#     print("✅ 저장 완료:", output_path)
-#     print(f"📊 X shape: {X_array.shape} | y shape: {y_array.shape} | #PIDs: {len(np.unique(pid_array))}")
-#     print(f"🧩 Channels: {X_array.shape[1]} | (예: {feature_tags[:min(10,len(feature_tags))]})")
-#     print("📝 saved: scene_array.npy, windex_array.npy, feature_tag_list.npy" + (", meta.json" if save_meta else ""))
+    
+    
 # =========================
 # [ADD] Stratified PID split with scene balance + test-size constraints
 # Place this block at the end of ml_dataloader.py
@@ -1707,3 +1260,727 @@ def print_split_report(
     print(f"[y] train: mean={tr['mean']:.3f}, std={tr['std']:.3f}, IQR={tr['iqr']:.3f}")
     print(f"[y]   val: mean={va['mean']:.3f}, std={va['std']:.3f}, IQR={va['iqr']:.3f}")
     print(f"[y]  test: mean={te['mean']:.3f}, std={te['std']:.3f}, IQR={te['iqr']:.3f}\n")
+
+import os
+from typing import Optional, Sequence, Dict, Any
+
+import numpy as np
+import pandas as pd
+from joblib import Parallel, delayed
+
+from behavior_features import (
+    ColumnMapping,
+    compute_agent_player_relations,
+    make_behavior_windows_timeseries,
+)
+from behavior_utils import PERSONAL_ZONES_DEFAULT
+
+
+# -------------------------------------------------
+# 1) 120Hz → 60Hz downsample (scene-wise)
+# -------------------------------------------------
+def downsample_120_to_60_scenewise(
+    df: pd.DataFrame,
+    cols: ColumnMapping,
+    factor: int = 2,
+) -> pd.DataFrame:
+    """
+    120Hz → 60Hz 다운샘플 (scene-wise)
+    - scene/frame 기준 정렬 후
+    - scene별로 2프레임마다 하나씩만 남긴다.
+    - Frame 값은 원본 Frame을 유지 (0,2,4,...) → Customevent와 sync 유지
+    """
+    if df.empty:
+        return df.copy()
+
+    df = df.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+
+    pieces = []
+    for sc, df_sc in df.groupby(cols.scene, sort=False):
+        df_sub = df_sc.iloc[::factor].copy()
+        pieces.append(df_sub)
+
+    df_ds = pd.concat(pieces, ignore_index=True)
+    return df_ds
+
+
+# # -------------------------------------------------
+# # 2) 한 명 PID 처리 (시계열 버전)
+# # -------------------------------------------------
+# def process_one_behavior_pid_ts(
+#     pid_str: str,
+#     cols: ColumnMapping,
+#     *,
+#     data_dir: str,
+#     target_scenes,
+#     fs_beh: float,
+#     window_seconds: float,
+#     stride_seconds: float,
+#     use_gaze_xy: bool = True,
+# ):
+#     # (B) load
+#     main_path  = os.path.join(data_dir, f"{pid_str}_Main.pkl")
+#     agent_path = os.path.join(data_dir, f"{pid_str}_Agent.pkl")
+#     ce_path    = os.path.join(data_dir, f"{pid_str}_Customevent.pkl")
+
+#     if (not os.path.exists(main_path)) or (not os.path.exists(agent_path)):
+#         print(f"[WARN] Missing Main/Agent for PID={pid_str}, skipping.")
+#         return None
+#     if not os.path.exists(ce_path):
+#         print(f"[WARN] Missing Customevent for PID={pid_str}, skipping.")
+#         return None
+
+#     main_df  = pd.read_pickle(main_path)
+#     agent_df = pd.read_pickle(agent_path)
+#     ce_df    = pd.read_pickle(ce_path)
+
+#     # (C) scene filter
+#     main_df  = main_df[main_df[cols.scene].isin(target_scenes)].copy()
+#     agent_df = agent_df[agent_df[cols.scene].isin(target_scenes)].copy()
+#     ce_df    = ce_df[ce_df[cols.scene].isin(target_scenes)].copy()
+
+#     if main_df.empty:
+#         print(f"[INFO] PID={pid_str}: no TARGET_SCENES in Main, skip.")
+#         return None
+
+#     # (D) 120Hz -> 60Hz
+#     main_60  = downsample_120_to_60_scenewise(main_df,  cols=cols, factor=2)
+#     agent_60 = downsample_120_to_60_scenewise(agent_df, cols=cols, factor=2)
+
+#     # (E) label 분리
+#     if "anxiety" not in main_60.columns:
+#         print(f"[WARN] PID={pid_str}: 'anxiety' column missing in Main, skip.")
+#         return None
+
+#     main_60  = main_60.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+#     agent_60 = agent_60.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+
+#     y_frame_full = main_60["anxiety"].to_numpy(dtype=float)
+
+#     # ✅ feature 계산에 쓰이는 main에는 anxiety 제거 (1차 차단)
+#     main_60_feat = main_60.drop(columns=["anxiety"], errors="ignore")
+
+#     # (F) per-frame behavior TS
+#     df_ts = compute_agent_player_relations(
+#         main_60_feat,
+#         agent_60,
+#         cols=cols,
+#         zones=PERSONAL_ZONES_DEFAULT,
+#         fov_deg=110.0,
+#         dt=1.0 / fs_beh,
+#     )
+
+#     # raw position/rot 제거 (원하면 유지)
+#     df_ts = df_ts.drop(columns=["X_pos", "Z_pos", "Y_rot"], errors="ignore")
+
+#     # ✅ 최소 2차 차단: df_ts에 anxiety 계열 컬럼이 혹시라도 생겼으면 제거
+#     # - 여기서는 이름 기반으로 "anxiety"만 차단 (요청대로 y_cont 등은 건드리지 않음)
+#     leak_cols = [c for c in df_ts.columns if "anxiety" in str(c).lower()]
+#     if leak_cols:
+#         print(f"[LeakGuard] PID={pid_str}: dropping cols from df_ts -> {leak_cols}")
+#         df_ts = df_ts.drop(columns=leak_cols, errors="ignore")
+
+#     # 정렬 + 길이 맞추기
+#     df_ts = df_ts.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+
+#     min_len = min(len(df_ts), len(y_frame_full))
+#     if len(df_ts) != len(y_frame_full):
+#         print(f"[INFO] PID={pid_str}: len(df_ts)={len(df_ts)}, len(y_frame)={len(y_frame_full)} -> truncate {min_len}")
+
+#     df_ts = df_ts.iloc[:min_len].reset_index(drop=True)
+#     y_frame = y_frame_full[:min_len]
+
+#     # (H) windows 생성: feature_cols는 건드리지 않음(None) → 기존 자동 feature + CE 유지
+#     X_beh, pid_arr, scene_arr, widx_arr, feature_names_ts = make_behavior_windows_timeseries(
+#         df_ts,
+#         cols=cols,
+#         window_seconds=window_seconds,
+#         stride_seconds=stride_seconds,
+#         sampling_rate=fs_beh,
+#         pid_value=pid_str,
+#         scene_filter=target_scenes,
+#         feature_cols=None,
+#         ce_df=ce_df,
+#         use_gaze_xy=use_gaze_xy,
+#     )
+
+#     if X_beh.size == 0:
+#         print(f"[INFO] PID={pid_str}: no behavior windows (TS), skip.")
+#         return None
+
+#     # (I) y_window 계산
+#     win_len = int(window_seconds * fs_beh)
+#     hop     = int(stride_seconds * fs_beh)
+
+#     y_win_list = []
+#     scene_win_list = []
+
+#     scene_order = df_ts[cols.scene].drop_duplicates().tolist()
+#     for sc in scene_order:
+#         idx = (df_ts[cols.scene].to_numpy() == sc)
+#         y_arr = y_frame[idx]
+
+#         start = 0
+#         while start + win_len <= len(y_arr):
+#             end = start + win_len
+#             y_win_list.append(float(np.mean(y_arr[start:end])))
+#             scene_win_list.append(sc)
+#             start += hop
+
+#     y_win = np.array(y_win_list, dtype=float)
+#     scene_win = np.array(scene_win_list, dtype=object)
+
+#     if y_win.shape[0] != X_beh.shape[0]:
+#         print(f"[WARN] PID={pid_str}: y_win({y_win.shape[0]}) != X_beh({X_beh.shape[0]}), skip this PID.")
+#         return None
+
+#     if scene_arr.shape[0] == scene_win.shape[0]:
+#         assert np.all(scene_arr == scene_win), f"Scene order mismatch! PID={pid_str}"
+
+#     return X_beh, y_win, pid_arr, scene_arr, widx_arr, feature_names_ts
+
+
+# -------------------------------------------------
+# 3) 전체 PID 루프 (시계열 버전)
+# -------------------------------------------------
+def build_behavior_windows_ts_60hz(
+    *,
+    data_dir: str,
+    out_dir: str,
+    target_scenes,
+    fs_beh: float = 60.0,
+    window_seconds: float = 5.0,
+    stride_seconds: float = 2.0,
+    n_jobs: int = 4,
+    cols=None,
+):
+    import os
+    import numpy as np
+    from joblib import Parallel, delayed
+    from behavior_features import ColumnMapping
+    from ml_dataloader import process_one_behavior_pid_ts  # 경로에 맞게 유지
+
+    os.makedirs(out_dir, exist_ok=True)
+    if cols is None:
+        cols = ColumnMapping()
+
+    pids = sorted({f[:3] for f in os.listdir(data_dir) if f.endswith("_Main.pkl")})
+    print("Total participants:", len(pids), pids[:10])
+
+    X_all_list, y_all_list, pid_all_list, scene_all_list, widx_all_list = [], [], [], [], []
+    feature_names_ref = None
+    ref_pid = None
+
+    skipped = []  # [{pid, reason, ...}]
+
+    results = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(process_one_behavior_pid_ts)(
+            pid_str,
+            data_dir=data_dir,
+            target_scenes=target_scenes,
+            fs_beh=fs_beh,
+            window_seconds=window_seconds,
+            stride_seconds=stride_seconds,
+            cols=cols,
+        )
+        for pid_str in pids
+    )
+
+    for pid_str, out in zip(pids, results):
+        if out is None:
+            skipped.append({"pid": pid_str, "reason": "out_is_none"})
+            continue
+
+        X_beh, y_win, pid_arr, scene_arr, widx_arr, f_names = out
+
+        # ✅ “윈도우가 0개” 케이스를 feature mismatch로 취급하지 말고 별도 스킵
+        if X_beh is None or len(f_names) == 0 or (hasattr(X_beh, "shape") and X_beh.shape[0] == 0):
+            print(f"[SkipPID] PID={pid_str} no windows generated. "
+                  f"X_shape={None if X_beh is None else X_beh.shape}, C_cur={len(f_names)}")
+            skipped.append({
+                "pid": pid_str,
+                "reason": "no_windows",
+                "X_shape": None if X_beh is None else tuple(X_beh.shape),
+                "C_cur": int(len(f_names)),
+            })
+            continue
+
+        f_names = list(f_names)
+
+        if feature_names_ref is None:
+            feature_names_ref = f_names
+            ref_pid = pid_str
+            print(f"[FeatureRef] Using PID={ref_pid} as reference. C={len(feature_names_ref)}")
+        else:
+            if f_names != feature_names_ref:
+                ref_set = set(feature_names_ref)
+                cur_set = set(f_names)
+                missing = sorted(ref_set - cur_set)
+                extra = sorted(cur_set - ref_set)
+
+                print(f"[SkipPID] PID={pid_str} feature mismatch vs ref(PID={ref_pid}). "
+                      f"C_ref={len(feature_names_ref)} C_cur={len(f_names)} "
+                      f"missing={len(missing)} extra={len(extra)}")
+                if missing:
+                    print("  missing(ex):", missing[:10])
+                if extra:
+                    print("  extra(ex):", extra[:10])
+
+                skipped.append({
+                    "pid": pid_str,
+                    "reason": "feature_mismatch",
+                    "C_ref": int(len(feature_names_ref)),
+                    "C_cur": int(len(f_names)),
+                    "missing": missing,
+                    "extra": extra,
+                })
+                continue
+
+        X_all_list.append(X_beh)
+        y_all_list.append(y_win)
+        pid_all_list.append(pid_arr)
+        scene_all_list.append(scene_arr)
+        widx_all_list.append(widx_arr)
+
+    if not X_all_list:
+        raise RuntimeError("No behavior TS windows were generated (all skipped or none).")
+
+    X_all = np.concatenate(X_all_list, axis=0).astype(np.float32)
+    y_all = np.concatenate(y_all_list, axis=0).astype(np.float32)
+    pid_all = np.concatenate(pid_all_list, axis=0)
+    scene_all = np.concatenate(scene_all_list, axis=0)
+    widx_all = np.concatenate(widx_all_list, axis=0)
+
+    print("[Behavior TS] X_all:", X_all.shape)
+    print("[Behavior TS] y_all:", y_all.shape)
+    print("[Behavior TS] pid_all:", pid_all.shape)
+
+    if skipped:
+        print(f"[Summary] Skipped PIDs: {len(skipped)} / {len(pids)}")
+        # 이유별 카운트
+        from collections import Counter
+        cnt = Counter([d["reason"] for d in skipped])
+        print("  reason counts:", dict(cnt))
+        print("  skipped pid list(ex):", [d["pid"] for d in skipped[:30]])
+
+    X_path = os.path.join(out_dir, "X_array.npy")
+    y_path = os.path.join(out_dir, "y_array.npy")
+    pid_path = os.path.join(out_dir, "pid_array.npy")
+    scene_path = os.path.join(out_dir, "scene_array.npy")
+    widx_path = os.path.join(out_dir, "windex_array.npy")
+    feat_path = os.path.join(out_dir, "feature_tag_list.npy")
+
+    np.save(X_path, X_all)
+    np.save(y_path, y_all)
+    np.save(pid_path, pid_all)
+    np.save(scene_path, scene_all)
+    np.save(widx_path, widx_all)
+    np.save(feat_path, np.array(feature_names_ref, dtype=object))
+
+    print(f"✅ Saved 60Hz behavior TS dataset at: {out_dir}")
+
+    return {
+        "X": X_all,
+        "y": y_all,
+        "pid": pid_all,
+        "scene": scene_all,
+        "windex": widx_all,
+        "feature_names": feature_names_ref,
+        "ref_pid": ref_pid,
+        "skipped": skipped,
+        "paths": {
+            "X": X_path,
+            "y": y_path,
+            "pid": pid_path,
+            "scene": scene_path,
+            "windex": widx_path,
+            "feature_names": feat_path,
+        },
+    }
+#######우회패치#########################
+
+
+import numpy as np
+import pandas as pd
+
+def _wrap_angle_diff_deg(d):
+    """각도 차분을 [-180, 180)로 wrap (deg)."""
+    return ((d + 180.0) % 360.0) - 180.0
+
+def _recompute_kinematics_scene_causal(
+    df: pd.DataFrame,
+    *,
+    cols,
+    fs_beh: float,
+    original_hz: float = 120.0,
+    x_col: str = "X_pos",
+    z_col: str = "Z_pos",
+    yaw_col: str = "Y_rot",
+) -> pd.DataFrame:
+    """
+    씬별로 (pos, yaw) 기반 속도/가속도 계열을 causal하게 재계산.
+    - t=0에서 pos-0 같은 계산을 절대 하지 않음.
+    - frame 간격이 불규칙할 수 있으니 dt를 frame_diff/original_hz로 계산(가능하면).
+    """
+    if df.empty or (x_col not in df.columns) or (z_col not in df.columns):
+        return df
+
+    out = df.copy()
+    out = out.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+
+    # 기존에 있던 speed/accel 계열 컬럼 제거(있으면)
+    base_drop = {
+        "speed", "speed_sq", "accel", "accel_abs",
+        "head_rot_vel", "head_rot_accel",
+        "yaw_vel", "yaw_accel", "rot_vel", "rot_accel",
+    }
+    drop_cols = []
+    for c in out.columns:
+        base = c.split("::", 1)[-1]
+        if base in base_drop:
+            drop_cols.append(c)
+    if drop_cols:
+        out = out.drop(columns=drop_cols, errors="ignore")
+
+    n = len(out)
+    speed = np.zeros(n, dtype=np.float32)
+    accel = np.zeros(n, dtype=np.float32)
+    rot_vel = np.zeros(n, dtype=np.float32)
+    rot_accel = np.zeros(n, dtype=np.float32)
+
+    # 그룹 인덱스 접근 (pandas groupby.indices는 dict로 줘서 빠름)
+    grp = out.groupby(cols.scene, sort=False).indices
+    for sc, idxs in grp.items():
+        idx = np.asarray(list(idxs), dtype=np.int64)
+        idx.sort()
+
+        x = out.loc[idx, x_col].to_numpy(dtype=np.float32)
+        z = out.loc[idx, z_col].to_numpy(dtype=np.float32)
+
+        # dt 계산: frame_diff / original_hz (frame은 0,2,4... 유지 중이라면 dt=1/60이 됨)
+        if cols.frame in out.columns:
+            fr = out.loc[idx, cols.frame].to_numpy(dtype=np.float32)
+            dfr = np.diff(fr, prepend=fr[0])
+            dt = dfr / float(original_hz)
+        else:
+            dt = np.full_like(x, 1.0 / float(fs_beh), dtype=np.float32)
+
+        # dt[0] 및 비정상 dt 보정
+        dt0 = np.float32(1.0 / float(fs_beh))
+        dt = dt.astype(np.float32)
+        dt[0] = dt0
+        dt = np.where(dt <= 1e-9, dt0, dt).astype(np.float32)
+
+        # causal diff: prepend=자기 자신 → 첫 샘플 diff=0
+        dx = np.diff(x, prepend=x[0]).astype(np.float32)
+        dz = np.diff(z, prepend=z[0]).astype(np.float32)
+
+        v = np.sqrt(dx * dx + dz * dz) / dt
+        a = np.diff(v, prepend=v[0]).astype(np.float32) / dt
+
+        speed[idx] = v
+        accel[idx] = a
+
+        # yaw 기반 회전 가속도(있을 때만)
+        if yaw_col in out.columns:
+            yaw = out.loc[idx, yaw_col].to_numpy(dtype=np.float32)
+
+            # deg/rad 자동 감지(대충)
+            max_abs = np.nanmax(np.abs(yaw)) if yaw.size else 0.0
+            is_rad = (max_abs <= (2 * np.pi + 0.5))
+
+            dyaw = np.diff(yaw, prepend=yaw[0]).astype(np.float32)
+            if is_rad:
+                # wrap to [-pi, pi)
+                dyaw = ((dyaw + np.pi) % (2 * np.pi)) - np.pi
+            else:
+                dyaw = _wrap_angle_diff_deg(dyaw)
+
+            rv = dyaw / dt
+            ra = np.diff(rv, prepend=rv[0]).astype(np.float32) / dt
+
+            rot_vel[idx] = rv
+            rot_accel[idx] = ra
+
+    out["speed"] = speed
+    out["speed_sq"] = speed * speed
+    out["accel"] = accel
+    out["accel_abs"] = np.abs(accel)
+    # 기존 네이밍에 맞춰 head_rot_accel로 제공 (필요시 head_rot_vel도)
+    out["head_rot_vel"] = rot_vel
+    out["head_rot_accel"] = rot_accel
+
+    # non-finite 방어
+    num = out.select_dtypes(include=[np.number])
+    if not np.isfinite(num.to_numpy()).all():
+        bad = ~np.isfinite(num.to_numpy())
+        print(f"[KinematicsGuard] non-finite detected: {bad.sum()} values -> fill 0")
+        out[num.columns] = num.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    return out
+
+def _zscore_windows_skip_discrete(X: np.ndarray, feature_tags, clip: float = 10.0, eps: float = 1e-6):
+    """
+    (N,T,C)에서 window-wise zscore.
+    - ce::, *_flag, *flag* 같은 이산 채널은 스킵.
+    """
+    X = X.astype(np.float32, copy=False)
+    tags = [str(t).lower() for t in feature_tags]
+
+    def is_cont(t: str) -> bool:
+        if "ce::" in t or "customevent" in t or "event" in t:
+            return False
+        if t.endswith("_flag") or "flag" in t:
+            return False
+        return True
+
+    mask = np.array([is_cont(t) for t in tags], dtype=bool)
+    if not mask.any():
+        return X
+
+    Xm = X[:, :, mask]
+    mu = Xm.mean(axis=1, keepdims=True)
+    sd = Xm.std(axis=1, keepdims=True)
+    sd = np.where(sd < eps, 1.0, sd).astype(np.float32)
+    Xm = (Xm - mu) / sd
+    if clip is not None:
+        Xm = np.clip(Xm, -clip, clip)
+    X[:, :, mask] = Xm
+    return X
+
+
+# -------------------------------------------------
+# 1-1) Head rotation derivative fix (unwrap + optional causal EMA)
+# -------------------------------------------------
+def recompute_headrot_features_from_yaw(
+    df_ts: pd.DataFrame,
+    *,
+    scene_col: str,
+    frame_col: str,
+    yaw_col: str = "Y_rot",
+    fs: float = 60.0,
+    smooth_tau: float = 0.05,        # 0이면 스무딩 없음. 추천: 0.03~0.08s
+    use_acc_per_sec2: bool = True,   # True: deg/s^2, False: per-step Δvel
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """
+    df_ts에 포함된 yaw(기본: 'Y_rot', degrees)를 이용해 head rotation 파생치들을 재계산합니다.
+
+    - scene 단위 unwrap (0/360 불연속 제거)
+    - (옵션) causal EMA 스무딩 후 미분 (가속도 폭주/노이즈 증폭 완화)
+    - overwrite 대상:
+        head_rot_speed, head_rot_speed_abs, head_rot_accel, head_rot_accel_abs
+    - head_rot_vel 컬럼은 생성/사용하지 않음
+    """
+    if yaw_col not in df_ts.columns:
+        if verbose:
+            print(f"[HeadRotPatch] '{yaw_col}' not found -> skip")
+        return df_ts
+
+    out = df_ts.copy()
+    dt = 1.0 / float(fs)
+
+    # 보통은 이미 존재해야 정상입니다. 혹시 없으면 생성(끝에 붙어서 feature order에 영향 가능)
+    needed = ["head_rot_speed", "head_rot_speed_abs", "head_rot_accel", "head_rot_accel_abs"]
+    for c in needed:
+        if c not in out.columns:
+            if verbose:
+                print(f"[HeadRotPatch] missing '{c}' -> creating new column (may affect feature order)")
+            out[c] = np.nan
+
+    for sc, gidx in out.groupby(scene_col, sort=False).groups.items():
+        idx = np.asarray(list(gidx), dtype=int)
+        idx = idx[np.argsort(out.loc[idx, frame_col].to_numpy())]
+
+        yaw_deg = out.loc[idx, yaw_col].to_numpy(dtype=np.float32)
+
+        # non-finite는 scene 내부에서 ffill/bfill
+        if not np.isfinite(yaw_deg).all():
+            s = pd.Series(yaw_deg).replace([np.inf, -np.inf], np.nan)
+            yaw_deg = s.fillna(method="ffill").fillna(method="bfill").to_numpy(dtype=np.float32)
+
+        yaw_rad = np.deg2rad(yaw_deg)
+        yaw_unw = np.unwrap(yaw_rad)
+
+        if smooth_tau and smooth_tau > 0:
+            alpha = 1.0 - np.exp(-dt / float(smooth_tau))
+            yaw_unw = _ema_causal(yaw_unw.astype(np.float32), float(alpha))
+
+        dyaw = np.diff(yaw_unw, prepend=yaw_unw[0])
+        vel = (np.rad2deg(dyaw) / dt).astype(np.float32)
+
+        dvel = np.diff(vel, prepend=vel[0]).astype(np.float32)
+        acc = (dvel / dt).astype(np.float32) if use_acc_per_sec2 else dvel.astype(np.float32)
+
+        out.loc[idx, "head_rot_speed"] = vel
+        out.loc[idx, "head_rot_speed_abs"] = np.abs(vel)
+        out.loc[idx, "head_rot_accel"] = acc
+        out.loc[idx, "head_rot_accel_abs"] = np.abs(acc)
+
+    return out
+
+
+def process_one_behavior_pid_ts(
+    pid_str: str,
+    cols: ColumnMapping,
+    *,
+    data_dir: str,
+    target_scenes,
+    fs_beh: float,
+    window_seconds: float,
+    stride_seconds: float,
+    use_gaze_xy: bool = True,
+    headrot_patch: bool = True,
+    headrot_smooth_tau: float = 0.05,
+    headrot_use_acc_per_sec2: bool = True,
+):
+    # ---------------------------
+    # (0) leak guard util
+    # ---------------------------
+    LEAK_COLS_EXACT = {
+        "anxiety", "y_cont", "y_label", "label", "target",
+        "y", "y_raw", "y_true", "anxiety_cont", "anxiety_frame",
+    }
+    LEAK_SUBSTR = ("anxiety", "y_cont", "y_label", "label", "target")
+
+    def _is_leak_col(c):
+        s = str(c).lower()
+        return (s in LEAK_COLS_EXACT) or any(k in s for k in LEAK_SUBSTR)
+
+    # (B) load
+    main_path  = os.path.join(data_dir, f"{pid_str}_Main.pkl")
+    agent_path = os.path.join(data_dir, f"{pid_str}_Agent.pkl")
+    ce_path    = os.path.join(data_dir, f"{pid_str}_Customevent.pkl")
+
+    if (not os.path.exists(main_path)) or (not os.path.exists(agent_path)):
+        print(f"[WARN] Missing Main/Agent for PID={pid_str}, skipping.")
+        return None
+
+    main_df  = pd.read_pickle(main_path)
+    agent_df = pd.read_pickle(agent_path)
+
+    ce_df = None
+    if os.path.exists(ce_path):
+        ce_df = pd.read_pickle(ce_path)
+        ce_df = ce_df[ce_df[cols.scene].isin(target_scenes)].copy()
+
+    # (C) filter scenes
+    main_df  = main_df[main_df[cols.scene].isin(target_scenes)].copy()
+    agent_df = agent_df[agent_df[cols.scene].isin(target_scenes)].copy()
+    if main_df.empty:
+        print(f"[WARN] PID={pid_str} has no target scenes, skipping.")
+        return None
+
+    # (D) downsample 120->60
+    main_60  = downsample_120_to_60_scenewise(main_df, cols=cols, factor=2)
+    agent_60 = downsample_120_to_60_scenewise(agent_df, cols=cols, factor=2)
+
+    # ✅ 매우 중요: downsample 했으면 fs_beh가 60인지 보장
+    # (호출부에서 fs_beh=60을 주는 게 가장 깔끔)
+    if abs(fs_beh - 60.0) > 1e-6:
+        print(f"[WARN] fs_beh={fs_beh} but data is downsampled to 60Hz. "
+              f"Consider passing fs_beh=60 to avoid scale mismatch.")
+
+    if "anxiety" not in main_60.columns:
+        print(f"[WARN] PID={pid_str} has no 'anxiety' column, skipping.")
+        return None
+
+    main_60  = main_60.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+    agent_60 = agent_60.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+
+    # ✅ y는 따로 보관(키로 정렬/병합할 것)
+    y_key = main_60[[cols.scene, cols.frame, "anxiety"]].copy()
+
+    # ✅ label 계열 컬럼(특히 y_cont)을 main feature에서 제거
+    drop_cols = [c for c in main_60.columns if _is_leak_col(c)]
+    main_60_feat = main_60.drop(columns=drop_cols, errors="ignore")
+
+    # (E) compute relations -> df_ts
+    df_ts = compute_agent_player_relations(
+        main_60_feat,
+        agent_60,
+        cols=cols,
+        zones=PERSONAL_ZONES_DEFAULT,
+        fov_deg=110.0,
+        dt=1.0 / fs_beh,
+    )
+
+    # (F) leak guard: df_ts에서도 한번 더 제거
+    df_ts = df_ts.drop(columns=[c for c in df_ts.columns if _is_leak_col(c)], errors="ignore")
+
+    # ✅ (중요) y 정렬: scene+frame으로 정확히 merge (min_len 자르기 금지)
+    df_ts = df_ts.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+    y_key = y_key.sort_values([cols.scene, cols.frame]).reset_index(drop=True)
+
+    merged = df_ts[[cols.scene, cols.frame]].merge(
+        y_key, on=[cols.scene, cols.frame], how="left"
+    )
+    y_frame = merged["anxiety"].to_numpy(dtype=float)
+    ok = np.isfinite(y_frame)
+
+    df_ts = df_ts.loc[ok].reset_index(drop=True)
+    y_frame = y_frame[ok]
+
+    # (G) Head rotation patch
+    if headrot_patch:
+        df_ts = recompute_headrot_features_from_yaw(
+            df_ts,
+            scene_col=cols.scene,
+            frame_col=cols.frame,
+            yaw_col="Y_rot",
+            fs=fs_beh,
+            smooth_tau=headrot_smooth_tau,
+            use_acc_per_sec2=headrot_use_acc_per_sec2,
+            verbose=False,
+        )
+
+    # (H) drop yaw/pos
+    df_ts = df_ts.drop(columns=["X_pos", "Z_pos", "Y_rot"], errors="ignore")
+
+    # (I) windowing
+    X_beh, pid_arr, scene_arr, widx_arr, feature_names_ts = make_behavior_windows_timeseries(
+        df_ts,
+        cols=cols,
+        window_seconds=window_seconds,
+        stride_seconds=stride_seconds,
+        sampling_rate=fs_beh,
+        pid_value=pid_str,
+        scene_filter=target_scenes,
+        feature_cols=None,   # 기존 자동 feature+CE 유지
+        ce_df=ce_df,
+        use_gaze_xy=use_gaze_xy,
+    )
+    X_beh = _zscore_windows_skip_discrete(X_beh, feature_names_ts, clip=10.0)
+
+    # ✅ 최종: feature 이름에 leak이 섞였는지 검사 (보험)
+    bad_feats = [f for f in feature_names_ts if any(k in str(f).lower() for k in LEAK_SUBSTR)]
+    if bad_feats:
+        raise RuntimeError(f"[LEAK DETECTED] Found leak-like feature names: {bad_feats[:10]}")
+
+    # (J) y_window 계산 (기존 로직 유지) + 길이 체크
+    total_frames_per_win = int(window_seconds * fs_beh)
+    stride_frames = int(stride_seconds * fs_beh)
+
+    y_win = []
+    df_ts_scene = df_ts[cols.scene].to_numpy()
+    unique_scenes = list(pd.unique(df_ts_scene))
+
+    for sc in unique_scenes:
+        sc_mask = (df_ts_scene == sc)
+        sc_indices = np.where(sc_mask)[0]
+        y_sc = y_frame[sc_indices]
+
+        start = 0
+        while start + total_frames_per_win <= len(y_sc):
+            seg = y_sc[start : start + total_frames_per_win]
+            y_win.append(np.mean(seg))
+            start += stride_frames
+
+    y_win = np.array(y_win, dtype=np.float32)
+
+    if len(y_win) != len(X_beh):
+        raise RuntimeError(f"[ALIGNMENT ERROR] len(X_beh)={len(X_beh)} != len(y_win)={len(y_win)} "
+                           f"(windowing mismatch).")
+
+    return X_beh, y_win, pid_arr, scene_arr, widx_arr, feature_names_ts
+

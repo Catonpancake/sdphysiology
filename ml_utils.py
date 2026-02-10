@@ -241,6 +241,84 @@ def hv_mask_from_train_x(X_all, train_mask, q=0.30):
     thr = float(np.quantile(std_all[train_mask], q)) if np.any(train_mask) else 0.0
     keep_all = std_all >= thr
     return keep_all
+
+import numpy as np
+
+def make_y_transform_train_only(
+    y_train: np.ndarray,
+    scene_train: np.ndarray,
+    mode: str = "scene",          # {"global", "scene"}
+    standardize: bool = True,     # True면 z-score, False면 mean-center만
+    eps: float = 1e-6,
+):
+    """
+    Across-safe y normalization:
+    - NEVER uses pid.
+    - Fit stats on TRAIN ONLY, apply unchanged to val/test.
+
+    Returns:
+      transform(y, scene) -> y_norm
+      inv_transform(y_norm, scene) -> y_orig (optional)
+      stats dict
+    """
+    y_train = y_train.astype(np.float32)
+    scene_train = scene_train.astype(object)
+
+    # global stats (train only)
+    mu_g = float(np.mean(y_train)) if len(y_train) else 0.0
+    sd_g = float(np.std(y_train))  if len(y_train) else 1.0
+    if sd_g < eps: sd_g = 1.0
+
+    stats = {"mode": mode, "standardize": standardize, "mu_global": mu_g, "sd_global": sd_g}
+
+    if mode == "global":
+        def _mu(scene_i): return mu_g
+        def _sd(scene_i): return sd_g
+
+    elif mode == "scene":
+        mu_s = {}
+        sd_s = {}
+        for sc in np.unique(scene_train):
+            m = (scene_train == sc)
+            ys = y_train[m]
+            mu = float(np.mean(ys)) if len(ys) else mu_g
+            sd = float(np.std(ys))  if len(ys) else sd_g
+            if sd < eps: sd = sd_g
+            mu_s[sc] = mu
+            sd_s[sc] = sd
+
+        stats["mu_scene"] = {str(k): float(v) for k, v in mu_s.items()}
+        stats["sd_scene"] = {str(k): float(v) for k, v in sd_s.items()}
+
+        def _mu(scene_i): return mu_s.get(scene_i, mu_g)
+        def _sd(scene_i): return sd_s.get(scene_i, sd_g)
+
+    else:
+        raise ValueError(f"mode must be 'global' or 'scene', got {mode}")
+
+    def transform(y: np.ndarray, scene: np.ndarray):
+        y = y.astype(np.float32)
+        scene = scene.astype(object)
+        mu = np.array([_mu(sc) for sc in scene], dtype=np.float32)
+        if standardize:
+            sd = np.array([_sd(sc) for sc in scene], dtype=np.float32)
+            return (y - mu) / (sd + eps)
+        else:
+            return (y - mu)
+
+    def inv_transform(y_norm: np.ndarray, scene: np.ndarray):
+        y_norm = y_norm.astype(np.float32)
+        scene = scene.astype(object)
+        mu = np.array([_mu(sc) for sc in scene], dtype=np.float32)
+        if standardize:
+            sd = np.array([_sd(sc) for sc in scene], dtype=np.float32)
+            return y_norm * (sd + eps) + mu
+        else:
+            return y_norm + mu
+
+    return transform, inv_transform, stats
+
+
 def hv_mask_from_train_y(y_all, pid_all, scene_all, train_mask, q=0.30):
     """
     Train-derived HV mask (target-based; leakage-safe since computed on TRAIN ONLY):
@@ -287,9 +365,6 @@ def apply_per_split_mask(X, y, pid, scene, widx, train_m, val_m, test_m, keep_al
            (X[va_idx], y[va_idx], pid[va_idx], scene[va_idx], widx[va_idx]), \
            (X[te_idx], y[te_idx], pid[te_idx], scene[te_idx], widx[te_idx])
 
-def assert_no_pid_overlap(pid_train, pid_test):
-    dup = set(pid_train.tolist()).intersection(set(pid_test.tolist()))
-    assert len(dup) == 0, f"PID overlap detected between train and test: {sorted(list(dup))[:10]}"
     
 # === ml_utils.py ===
 from sklearn.model_selection import GroupKFold
@@ -984,6 +1059,55 @@ def create_dataloaders(
 # ← 반드시 열 0에 위치 (클래스 밖, 전역)
 import torch
 
+# @torch.no_grad()
+# def evaluate(model, loader, device, model_type="CNN", return_arrays=True):
+#     """
+#     Safe evaluation:
+#       - Always normalizes preds / targets to 1-D (B,) before accumulation
+#       - Avoids 0-D scalar issues when batch size == 1
+#       - Returns (r2, rmse, mae, avg_loss, y_true, y_pred)
+#     """
+#     model.eval()
+#     criterion = torch.nn.MSELoss(reduction="mean")
+
+#     total_loss, total_n = 0.0, 0
+#     all_y_true, all_y_pred = [], []
+
+#     for X_batch, y_batch in loader:
+#         X_batch = X_batch.to(device, non_blocking=True)
+#         y_batch = y_batch.to(device, non_blocking=True)
+
+#         # --- forward ---
+#         preds = model(X_batch)
+
+#         # --- shape normalization: ALWAYS 1-D (B,) ---
+#         if preds.dim() == 2 and preds.size(-1) == 1:
+#             preds = preds.squeeze(-1)   # (B,1) -> (B,)
+#         preds = preds.reshape(-1)        # safeguard: (B,) no matter what
+#         y_batch = y_batch.reshape(-1)    # targets also (B,)
+
+#         # --- loss ---
+#         loss = criterion(preds, y_batch)
+#         bs = y_batch.size(0)
+#         total_loss += loss.item() * bs
+#         total_n += bs
+
+#         # --- collect ---
+#         if return_arrays:
+#             all_y_true.append(y_batch.detach().view(-1).cpu())
+#             all_y_pred.append(preds.detach().view(-1).cpu())
+
+#     avg_loss = total_loss / max(1, total_n)
+
+#     if return_arrays:
+#         y_true = torch.cat(all_y_true, dim=0).cpu().numpy() if all_y_true else None
+#         y_pred = torch.cat(all_y_pred, dim=0).cpu().numpy() if all_y_pred else None
+#         r2, rmse, mae = compute_metrics(y_true, y_pred) if (y_true is not None and y_pred is not None) else (float("nan"), float("nan"), float("nan"))
+#     else:
+#         y_true = y_pred = None
+#         r2 = rmse = mae = float("nan")
+
+#     return r2, rmse, mae, avg_loss, y_true, y_pred
 @torch.no_grad()
 def evaluate(model, loader, device, model_type="CNN", return_arrays=True):
     """
@@ -991,7 +1115,14 @@ def evaluate(model, loader, device, model_type="CNN", return_arrays=True):
       - Always normalizes preds / targets to 1-D (B,) before accumulation
       - Avoids 0-D scalar issues when batch size == 1
       - Returns (r2, rmse, mae, avg_loss, y_true, y_pred)
+
+    ✅ FIX:
+      - return_arrays=False여도 metrics(r2/rmse/mae)는 계산한다.
+      - 단지 y_true/y_pred 배열만 None으로 반환한다.
     """
+    import numpy as np
+    import torch
+
     model.eval()
     criterion = torch.nn.MSELoss(reduction="mean")
 
@@ -1002,14 +1133,13 @@ def evaluate(model, loader, device, model_type="CNN", return_arrays=True):
         X_batch = X_batch.to(device, non_blocking=True)
         y_batch = y_batch.to(device, non_blocking=True)
 
-        # --- forward ---
         preds = model(X_batch)
 
         # --- shape normalization: ALWAYS 1-D (B,) ---
         if preds.dim() == 2 and preds.size(-1) == 1:
             preds = preds.squeeze(-1)   # (B,1) -> (B,)
-        preds = preds.reshape(-1)        # safeguard: (B,) no matter what
-        y_batch = y_batch.reshape(-1)    # targets also (B,)
+        preds = preds.reshape(-1)
+        y_batch = y_batch.reshape(-1)
 
         # --- loss ---
         loss = criterion(preds, y_batch)
@@ -1017,24 +1147,37 @@ def evaluate(model, loader, device, model_type="CNN", return_arrays=True):
         total_loss += loss.item() * bs
         total_n += bs
 
-        # --- collect ---
-        if return_arrays:
-            all_y_true.append(y_batch.detach().view(-1).cpu())
-            all_y_pred.append(preds.detach().view(-1).cpu())
+        # --- collect ALWAYS (for metrics) ---
+        all_y_true.append(y_batch.detach().view(-1).cpu())
+        all_y_pred.append(preds.detach().view(-1).cpu())
 
     avg_loss = total_loss / max(1, total_n)
 
-    if return_arrays:
-        y_true = torch.cat(all_y_true, dim=0).cpu().numpy() if all_y_true else None
-        y_pred = torch.cat(all_y_pred, dim=0).cpu().numpy() if all_y_pred else None
-        r2, rmse, mae = compute_metrics(y_true, y_pred) if (y_true is not None and y_pred is not None) else (float("nan"), float("nan"), float("nan"))
+    if all_y_true:
+        y_true = torch.cat(all_y_true, dim=0).cpu().numpy()
+        y_pred = torch.cat(all_y_pred, dim=0).cpu().numpy()
+        r2, rmse, mae = compute_metrics(y_true, y_pred)
     else:
         y_true = y_pred = None
         r2 = rmse = mae = float("nan")
 
+    # return_arrays=False면 배열만 숨김
+    if not return_arrays:
+        y_true = None
+        y_pred = None
+
     return r2, rmse, mae, avg_loss, y_true, y_pred
 
 
+def windowwise_zscore(X, eps=1e-6):
+    """
+    X: (N,T,C)
+    각 (n,c)별로 time축(T) 기준 z-score
+    leakage 없음(샘플 내부만 씀)
+    """
+    mu = X.mean(axis=1, keepdims=True)         # (N,1,C)
+    sd = X.std(axis=1, keepdims=True)          # (N,1,C)
+    return (X - mu) / (sd + eps)
 
 # def evaluate_and_save(
 #     model,
@@ -1224,8 +1367,8 @@ def train_model(
     scheduler_name="plateau",
     scheduler_patience=2, scheduler_factor=0.5,
     max_lr=None,
-    grad_clip_norm=1.0,
-    amp=True,
+    grad_clip_norm=0.5,
+    amp=False,
     deterministic=True,
     criterion = torch.nn.MSELoss(reduction="mean"),
     # Internal split params
@@ -1406,7 +1549,11 @@ def train_model(
                     if preds.dim() == 2 and preds.size(-1) == 1:
                         preds = preds.squeeze(-1)
                     loss = criterion(preds.reshape(-1), y_batch.reshape(-1))
-
+                if not torch.isfinite(loss):
+                    print(f"[WARN] Non-finite loss detected (epoch={epoch}). "
+                        f"Skipping this batch. loss={loss.item()}")
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
                 scaler.scale(loss).backward()
                 if grad_clip_norm:
                     scaler.unscale_(optimizer)
@@ -1616,9 +1763,37 @@ def train_model(
                 # val이 없는 경우(=train_only) 스케줄러만 진행
                 if scheduler_name == "cosine":
                     scheduler.step()
+        # --- [DEBUG] last-epoch(=현재 model) 성능 먼저 계산 ---
+        train_r2_last, train_rmse_last, train_mae_last, _, _, _ = evaluate(
+            model, train_loader, device, model_type=model_type
+        )
+        if val_loader is not None:
+            val_r2_last, val_rmse_last, val_mae_last, val_loss_last, _, _ = evaluate(
+                model, val_loader, device, model_type=model_type, return_arrays=False
+            )
+        else:
+            val_r2_last = val_rmse_last = val_mae_last = val_loss_last = float("nan")
 
+        last_epoch = len(train_losses)  # 실제 수행 epoch 수
+        print(f"[DEBUG] LAST  epoch={last_epoch} | TrainR2={train_r2_last:.8f} | ValR2={val_r2_last:.4f} | ValLoss={val_loss_last:.6f} | best@{best_epoch}")
+
+        # --- best_state 적용 (기존 로직) ---
         if best_state is not None:
             model.load_state_dict(best_state)
+
+        # --- [DEBUG] best_state 성능(기존처럼) ---
+        train_r2, train_rmse, train_mae, _, _, _ = evaluate(
+            model, train_loader, device, model_type=model_type
+        )
+        if val_loader is not None:
+            val_r2, val_rmse, val_mae, val_loss_best, _, _ = evaluate(
+                model, val_loader, device, model_type=model_type, return_arrays=False
+            )
+        else:
+            val_r2 = val_rmse = val_mae = float("nan")
+            val_loss_best = float("nan")
+
+        print(f"[DEBUG] BEST  epoch={best_epoch} | TrainR2={train_r2:.4f} | ValR2={val_r2:.4f} | ValLoss={val_loss_best:.6f}")
 
         # 보고용 train/val 지표
         train_r2, train_rmse, train_mae, _, _, _ = evaluate(
@@ -1630,7 +1805,7 @@ def train_model(
             )
         else:
             val_r2 = val_rmse = val_mae = float("nan")
-
+        print(f"Train R2={train_r2:.4f}, Val R2={val_r2:.4f}")
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -1936,7 +2111,7 @@ def grid_search_model(
     external_val_data=None,   # (X_val, y_val)
     patience=10,
     min_delta=1e-6,
-    criterion=torch.nn.MSELoss(reduction="mean")
+    criterion=torch.nn.MSELoss(reduction="mean"),
 ):
     """
     Multi-seed grid search for CNN/GRU etc.
@@ -1958,7 +2133,7 @@ def grid_search_model(
 
         for s in seed_list:
             try:
-                *_, val_r2, val_rmse, val_mae = train_model(
+                _model, val_r2, val_rmse, val_mae, *_ = train_model(
                     X, y, {**param_dict, "input_size": X.shape[-1]},  # 🔒 input_size 보장
                     model_type=model_type,
                     num_epochs=num_epochs,
@@ -2137,7 +2312,7 @@ def _train_eval_once(
         optimizer_name="adamw", weight_decay=1e-4,
         scheduler_name="plateau",
         scheduler_patience=2, scheduler_factor=0.5,
-        grad_clip_norm=1.0, amp=True, deterministic=True,
+        grad_clip_norm=0.5, amp=False, deterministic=True,###############################^^###############
         criterion=criterion
     )
     epochs_run = len(val_losses) if isinstance(val_losses, list) else np.nan
