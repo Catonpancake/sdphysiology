@@ -4058,6 +4058,23 @@ def _quick_check(X_arr, scene_vec, tag="SPLIT", k=3):
         sg = np.nanstd( xs, axis=(0,1))
         print(f"  - {s}: mu[0..2]={mu[:3]!r}, std[0..2]={sg[:3]!r}, N={xs.shape[0]}")
 
+# ============ Per-PID X normalization ============
+def _perpid_normalize_X(X, pids):
+    """각 PID별로 (T, C) 기준 mean/std 정규화.
+    y가 per-PID z-scored인 것과 스케일을 맞춤.
+    axis=(0,1): window축과 time축 모두 평균 → 채널별 통계.
+    """
+    X_out = X.copy().astype(np.float32)
+    for pid in np.unique(pids):
+        m = pids == pid
+        Xp = X_out[m]                               # (n_win, T, C)
+        mu = Xp.mean(axis=(0, 1), keepdims=True)    # (1, 1, C)
+        sg = Xp.std(axis=(0, 1), keepdims=True)     # (1, 1, C)
+        sg[sg < 1e-8] = 1.0                         # zero-std 보호
+        X_out[m] = (Xp - mu) / sg
+    return X_out
+
+
 # ============ Core runner (1 HV mode) ============
 def run_planA_one_mode(
     HV_MODE: str,
@@ -4122,6 +4139,15 @@ def run_planA_one_mode(
     X_va, y_va, pid_va, scene_va = X_val_raw[keep_val],   y_val_raw[keep_val],   pid_val[keep_val],   scene_val[keep_val]
     X_te, y_te, pid_te, scene_te = X_test_raw[keep_test], y_test_raw[keep_test], pid_test[keep_test], scene_test[keep_test]
     dbg(f"[{HV_MODE}] kept → train:{len(y_tr)} | val:{len(y_va)} | test:{len(y_te)}")
+
+    # ----- Per-PID X normalization (y가 per-PID z-score이므로 X도 맞춤) -----
+    _all_pids = np.concatenate([pid_tr, pid_va, pid_te])
+    _all_X    = np.concatenate([X_tr, X_va, X_te], axis=0)
+    _all_X_n  = _perpid_normalize_X(_all_X, _all_pids)
+    X_tr = _all_X_n[:len(y_tr)]
+    X_va = _all_X_n[len(y_tr):len(y_tr)+len(y_va)]
+    X_te = _all_X_n[len(y_tr)+len(y_va):]
+    dbg(f"[{HV_MODE}] per-PID X norm applied (n_pids={len(np.unique(_all_pids))})")
 
     # ----- Center from TRAIN only -----
     center_fn, _stat = center_from_train_split(y_tr, pid_tr, scene_tr)
