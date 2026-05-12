@@ -112,14 +112,31 @@ def _augment_behavior_dynamics(
     - dist_min / dist_mean / dist_std → 변화량
     - count_* (agents / zones / approach / fov) → 증가/감소량
     - trajectory (X_pos, Z_pos, Y_rot) → 전진/옆걸음/후진 비율
+
+    Scene-boundary safe: every `.diff()` is computed inside a single scene
+    group, so the first frame of each scene gets diff=0 instead of
+    "diff vs last frame of the previous scene" (which causes spurious spikes
+    when multiple scenes are concatenated before this function is called).
     """
     df = df.copy()
+
+    # Scene-aware diff: groupby scene if column exists, else fall back to
+    # whole-df diff (preserves legacy behavior for unusual callers).
+    scene_col = getattr(cols, "scene", None) if cols is not None else None
+    has_scene = (scene_col is not None) and (scene_col in df.columns)
+    if has_scene:
+        gscene = df.groupby(scene_col, sort=False, observed=True)
+
+    def _safe_diff(col_name: str) -> pd.Series:
+        if has_scene:
+            return gscene[col_name].diff().fillna(0.0).reset_index(level=0, drop=True)
+        return df[col_name].diff().fillna(0.0)
 
     # --------------------------------------------------
     # 1) speed / accel / 회전 속도 동역학
     # --------------------------------------------------
     if "speed" in df.columns:
-        dspeed = df["speed"].diff().fillna(0.0)
+        dspeed = _safe_diff("speed")
         df["speed_diff"] = dspeed
         df["speed_diff_abs"] = dspeed.abs()
         df["speed_sq"] = df["speed"] ** 2
@@ -128,7 +145,7 @@ def _augment_behavior_dynamics(
         df["accel_abs"] = df["accel"].abs()
 
     if "head_rot_speed" in df.columns:
-        drot = df["head_rot_speed"].diff().fillna(0.0)
+        drot = _safe_diff("head_rot_speed")
         df["head_rot_speed_abs"] = df["head_rot_speed"].abs()
         df["head_rot_accel"] = drot
         df["head_rot_accel_abs"] = drot.abs()
@@ -141,10 +158,11 @@ def _augment_behavior_dynamics(
             base = (
                 df[c]
                 .replace([np.inf, -np.inf], np.nan)
-                .fillna(method="ffill")
-                .fillna(method="bfill")
+                .ffill()
+                .bfill()
             )
-            dval = base.diff().fillna(0.0)
+            df[c] = base
+            dval = _safe_diff(c)
             df[f"{c}_diff"] = dval
             df[f"{c}_diff_abs"] = dval.abs()
 
@@ -162,7 +180,7 @@ def _augment_behavior_dynamics(
     ]
     for c in count_cols:
         if c in df.columns:
-            dc = df[c].diff().fillna(0.0)
+            dc = _safe_diff(c)
             df[f"{c}_diff"] = dc
             # 증가/감소를 분리해서 event-like feature로 사용
             df[f"{c}_inc"] = dc.clip(lower=0)
@@ -178,8 +196,8 @@ def _augment_behavior_dynamics(
         yaw_col = getattr(cols, "y_rot", "Y_rot")
 
         if x_col in df.columns and z_col in df.columns and yaw_col in df.columns:
-            dx = df[x_col].diff().fillna(0.0).to_numpy(dtype=float)
-            dz = df[z_col].diff().fillna(0.0).to_numpy(dtype=float)
+            dx = _safe_diff(x_col).to_numpy(dtype=float)
+            dz = _safe_diff(z_col).to_numpy(dtype=float)
             yaw_rad = np.deg2rad(df[yaw_col].to_numpy(dtype=float))
 
             # 월드 좌표 → 플레이어 local 좌표 (yaw 기준 회전)
@@ -459,16 +477,16 @@ def compute_player_heading(main_df: pd.DataFrame,
 
 #         # per-frame behavior TS(df)에 merge
 #         df = df.merge(gaze, on=[cols.scene, cols.frame], how="left")
-
+from typing import Optional, Dict, Tuple
 #     return df
 def compute_agent_player_relations(
     main_df: pd.DataFrame,
     agent_df: pd.DataFrame,
-    cols: ColumnMapping | None = None,
-    zones: dict[str, float] = None,
+    cols: Optional[ColumnMapping] = None,
+    zones: Optional[Dict[str, float]] = None,
     fov_deg: float = 110.0,
     dt: float = 1.0 / 120.0,
-    elevator_scenes: tuple[str, str] = ("Elevator1", "Elevator2"),
+    elevator_scenes: Tuple[str, str] = ("Elevator1", "Elevator2"),
     floor_dy_thresh: float = 2.0,
 ):
     """
@@ -533,8 +551,13 @@ def compute_agent_player_relations(
     # -------------------------
     # 4) Agent→Player 벡터, 거리
     # -------------------------
-    dx = merged[cols.player_x] - merged[cols.agent_x]
-    dz = merged[cols.player_z] - merged[cols.agent_z]
+    # After merge with suffixes=("", "_agent"), agent columns get "_agent" suffix
+    # (e.g., "X_pos" → "X_pos_agent") since they conflict with player columns.
+    agent_x_col = cols.agent_x + "_agent"
+    agent_z_col = cols.agent_z + "_agent"
+    agent_y_col = cols.agent_y + "_agent"
+    dx = merged[cols.player_x] - merged[agent_x_col]
+    dz = merged[cols.player_z] - merged[agent_z_col]
 
     dist = _safe_norm2d(dx.to_numpy(float), dz.to_numpy(float))  # shape (N_rows,)
     merged["dist_raw"] = dist
@@ -542,8 +565,8 @@ def compute_agent_player_relations(
     # -------------------------
     # 5) Elevator만 층(Y) 필터 적용
     # -------------------------
-    if (cols.player_y in merged.columns) and (cols.agent_y in merged.columns):
-        dy = (merged[cols.player_y] - merged[cols.agent_y]).abs()
+    if (cols.player_y in merged.columns) and (agent_y_col in merged.columns):
+        dy = (merged[cols.player_y] - merged[agent_y_col]).abs()
         is_elev = merged[cols.scene].isin(elevator_scenes)
         invalid_floor = is_elev & dy.gt(floor_dy_thresh)
     else:
@@ -720,24 +743,44 @@ def _compute_player_only_timeseries(main_h: pd.DataFrame,
     """
     Player 하나만 있을 때 self-motion features 계산.
     (position, speed, accel, head_rot_speed)
+
+    Scene-boundary safe: position/yaw differences are computed inside each
+    scene group, so the first frame of each scene gets speed=0, accel=0,
+    head_rot_speed=0 (no prior frame to diff from) instead of a spurious
+    spike from the teleport between the end of the previous scene and the
+    start of this one.
     """
     df = main_h[[cols.scene, cols.frame, cols.player_x, cols.player_z, cols.player_y_rot]].copy()
     df = df.sort_values(by=[cols.scene, cols.frame]).reset_index(drop=True)
 
-    x = df[cols.player_x].to_numpy(float)
-    z = df[cols.player_z].to_numpy(float)
-    yaw = df[cols.player_y_rot].to_numpy(float)
+    n = len(df)
+    speed = np.zeros(n, dtype=float)
+    accel = np.zeros(n, dtype=float)
+    head_rot_speed = np.zeros(n, dtype=float)
 
-    # position → speed / accel
-    dist_pos = _safe_norm2d(np.diff(x, prepend=x[0]), np.diff(z, prepend=z[0]))
-    speed = dist_pos / dt
-    accel = _finite_diff(speed, dt)
+    # Per-scene processing: diff stays inside scene
+    for sc, gidx in df.groupby(cols.scene, sort=False, observed=True).groups.items():
+        idx = np.asarray(list(gidx), dtype=int)
+        if len(idx) == 0:
+            continue
+        x = df.loc[idx, cols.player_x].to_numpy(dtype=float)
+        z = df.loc[idx, cols.player_z].to_numpy(dtype=float)
+        yaw = df.loc[idx, cols.player_y_rot].to_numpy(dtype=float)
 
-    # head rotation speed (deg/s)
-    dyaw = np.diff(yaw, prepend=yaw[0])
-    # -180~180 범위로 unwrap (optional)
-    dyaw = ((dyaw + 180.0) % 360.0) - 180.0
-    head_rot_speed = dyaw / dt
+        # position → speed / accel (intra-scene only)
+        dist_pos = _safe_norm2d(np.diff(x, prepend=x[0]), np.diff(z, prepend=z[0]))
+        sp = dist_pos / dt
+        ac = _finite_diff(sp, dt)
+
+        # head rotation speed (deg/s)
+        dyaw = np.diff(yaw, prepend=yaw[0])
+        # -180~180 범위로 unwrap (optional)
+        dyaw = ((dyaw + 180.0) % 360.0) - 180.0
+        hrs = dyaw / dt
+
+        speed[idx] = sp
+        accel[idx] = ac
+        head_rot_speed[idx] = hrs
 
     df["speed"] = speed
     df["accel"] = accel
@@ -1245,3 +1288,155 @@ def _attach_ce_features_framewise(
 
 
     return df
+
+
+# --------------------------------------------
+# 3-b. Per-window behavior 시계열 (N, T, C) 집계
+# --------------------------------------------
+def make_behavior_windows_timeseries(
+    df_ts: pd.DataFrame,
+    cols: ColumnMapping,
+    window_seconds: float,
+    stride_seconds: float,
+    sampling_rate: float,
+    pid_value: str,
+    scene_filter: Optional[Sequence[str]] = None,
+    feature_cols: Optional[Sequence[str]] = None,
+    ce_df: Optional[pd.DataFrame] = None,
+    use_gaze_xy: bool = True,
+):
+    """
+    per-frame behavior TS(DataFrame) → window-level 시계열 (N, T, C)로 변환.
+
+    - df_ts : per-frame behavior TS (이미 compute_agent_player_relations 통과한 상태)
+    - ce_df : 같은 PID의 Customevent TS (scene, Frame 기준). 있으면 프레임 단위로 붙임.
+    - feature_cols : 사용할 컬럼 목록 (scene, frame, gaze_x/y는 자동 제외됨)
+      None이면 df_ts에서 자동 추출.
+    - use_gaze_xy : True면 gaze_x/gaze_y를 per-frame 채널로 추가 (시간축 그대로 유지)
+
+    반환:
+      X_beh   : (N_window, T, C_total)
+      pid_arr : (N_window,)
+      scene_arr : (N_window,)
+      widx_arr  : (N_window,)
+      feature_names_ts : 최종 채널 이름 목록 (len = C_total)
+    """
+    # -------------------------
+    # 0) scene 필터링
+    # -------------------------
+    df = df_ts.copy()
+    if scene_filter is not None:
+        df = df[df[cols.scene].isin(scene_filter)].copy()
+
+    if df.empty:
+        return (
+            np.zeros((0, 0, 0), dtype=float),
+            np.zeros((0,), dtype=object),
+            np.zeros((0,), dtype=object),
+            np.zeros((0,), dtype=int),
+            [],
+        )
+
+    # -------------------------
+    # 1) Customevent → per-frame feature 붙이기
+    # -------------------------
+    if ce_df is not None and not ce_df.empty:
+        df = _attach_ce_features_framewise(df, ce_df, cols)
+    else:
+        print("⚠️ make_behavior_windows_timeseries: ce_df가 없거나 비어있음. Customevent feature는 사용하지 않습니다.")
+
+    # -------------------------
+    # 2) gaze_x / gaze_y 사용 여부
+    # -------------------------
+    has_gaze_x = hasattr(cols, "gaze_x") and (cols.gaze_x is not None) and (cols.gaze_x in df.columns)
+    has_gaze_y = hasattr(cols, "gaze_y") and (cols.gaze_y is not None) and (cols.gaze_y in df.columns)
+    use_gaze_xy = bool(use_gaze_xy and has_gaze_x and has_gaze_y)
+
+    # -------------------------
+    # 3) feature_cols 확정
+    # -------------------------
+    if feature_cols is None:
+        exclude = [cols.scene, cols.frame]
+        if use_gaze_xy:
+            exclude.extend([cols.gaze_x, cols.gaze_y])
+        feature_cols = [c for c in df.columns if c not in exclude]
+    else:
+        feature_cols = list(feature_cols)
+
+    base_feature_names = list(feature_cols)
+    gaze_feature_names: List[str] = []
+    if use_gaze_xy:
+        gaze_feature_names = [cols.gaze_x, cols.gaze_y]
+
+    # 최종 채널 이름
+    feature_names_ts = base_feature_names + gaze_feature_names
+
+    # -------------------------
+    # 4) window 길이/stride
+    # -------------------------
+    win_len = int(window_seconds * sampling_rate)
+    hop     = int(stride_seconds * sampling_rate)
+    if win_len <= 0 or hop <= 0:
+        raise ValueError("window_seconds / stride_seconds / sampling_rate 설정을 확인하세요.")
+
+    X_list: List[np.ndarray] = []
+    pid_list: List[str] = []
+    scene_list: List[str] = []
+    widx_list: List[int] = []
+
+    # -------------------------
+    # 5) scene별 sliding window
+    # -------------------------
+    for sc in df[cols.scene].drop_duplicates().tolist():
+        df_sc = df[df[cols.scene] == sc].copy()
+        if df_sc.empty:
+            continue
+
+        df_sc = df_sc.sort_values(cols.frame).reset_index(drop=True)
+        n = len(df_sc)
+
+        start = 0
+        widx  = 0
+
+        while start + win_len <= n:
+            end = start + win_len
+            seg = df_sc.iloc[start:end]
+
+            # (T, F_base)
+            base_seq = seg[feature_cols].to_numpy(dtype=float)
+
+            feats_seq = [base_seq]
+
+            # (T, 2) : gaze_x, gaze_y per-frame 시계열
+            if use_gaze_xy:
+                gaze_xy = seg[[cols.gaze_x, cols.gaze_y]].to_numpy(dtype=float)
+                feats_seq.append(gaze_xy)
+
+            # (T, C_total)
+            x_seq = np.concatenate(feats_seq, axis=1)
+
+            X_list.append(x_seq)
+            pid_list.append(pid_value)
+            scene_list.append(sc)
+            widx_list.append(widx)
+
+            start += hop
+            widx  += 1
+
+    if not X_list:
+        C_total = len(feature_names_ts)
+        return (
+            np.zeros((0, win_len, C_total), dtype=float),
+            np.zeros((0,), dtype=object),
+            np.zeros((0,), dtype=object),
+            np.zeros((0,), dtype=int),
+            feature_names_ts,
+        )
+
+    # (N, T, C_total)
+    X_beh    = np.stack(X_list, axis=0)
+    pid_arr  = np.array(pid_list, dtype=object)
+    scene_arr = np.array(scene_list, dtype=object)
+    widx_arr  = np.array(widx_list, dtype=int)
+
+    return X_beh, pid_arr, scene_arr, widx_arr, feature_names_ts
