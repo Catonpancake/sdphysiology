@@ -29,6 +29,13 @@ from __future__ import annotations
 import os, sys, time, json, shutil, subprocess, traceback
 from pathlib import Path
 
+# Force UTF-8 for stdout so em-dashes etc. don't crash on cp949 console (Windows-KR)
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 import numpy as np
 import pandas as pd
 
@@ -87,7 +94,11 @@ STATE = {'errors': [], 'warnings': [], 'anomalies': [], 'phases': {}}
 def log(msg: str, level: str = 'info') -> None:
     ts = time.strftime('%Y-%m-%d %H:%M:%S')
     line = f'[{ts}] [{level.upper()}] {msg}'
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except UnicodeEncodeError:
+        # Fallback for Windows-KR cp949 console
+        print(line.encode('ascii', errors='replace').decode('ascii'), flush=True)
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(line + '\n')
     if level == 'error':
