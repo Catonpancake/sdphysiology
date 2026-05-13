@@ -1,0 +1,19 @@
+{
+  "generated": "2026-05-13",
+  "baselines_3seed_csv": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_B\\mavise_*.csv",
+  "rnn_10seed_summary": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_B_10seed\\rnn_10seed_summary.csv",
+  "cnn_10seed_summary": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_B_10seed\\cnn_10seed_summary.csv",
+  "three_factor_csv": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_C\\05_three_factor_bottleneck_v2.csv",
+  "paired_test_csv": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_C\\02_elev1_vs_elev2_paired.csv",
+  "figure": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_C\\06_4panel_figure_v2.png",
+  "verification_stats": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\phase_A\\verification_stats.csv",
+  "autonomous_log": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\AUTONOMOUS_RUN_LOG.md",
+  "final_report": "c:\\Users\\user\\code\\SDPhysiology\\Writing_resource\\mavise_scene_analysis\\autonomous_run\\FINAL_REPORT.md",
+  "clean_data_npy": {
+    "Elevator": "c:\\Users\\user\\code\\SDPhysiology\\ml_processed_behavior_Elevator",
+    "Hallway": "c:\\Users\\user\\code\\SDPhysiology\\ml_processed_behavior_Hallway",
+    "Hall": "c:\\Users\\user\\code\\SDPhysiology\\ml_processed_behavior_Hall",
+    "Outside": "c:\\Users\\user\\code\\SDPhysiology\\ml_processed_behavior_Outside",
+    "all": "c:\\Users\\user\\code\\SDPhysiology\\ml_processed_behavior_all"
+  }
+}
