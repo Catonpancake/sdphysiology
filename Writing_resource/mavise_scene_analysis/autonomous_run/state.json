@@ -1,0 +1,32 @@
+{
+  "phases": {
+    "A": "ok",
+    "B": "ok",
+    "C": "ok"
+  },
+  "errors": [],
+  "warnings": [
+    [
+      "2026-05-13 02:11:05",
+      "[A.3] Physio shape (21954, 11, 300): appears (N,C,T). Will transpose."
+    ],
+    [
+      "2026-05-13 02:11:06",
+      "      [A.4] y_p vs y_b differ max=9.8262, using physio y"
+    ],
+    [
+      "2026-05-13 02:11:11",
+      "      [A.4] y_p vs y_b differ max=12.8061, using physio y"
+    ],
+    [
+      "2026-05-13 02:11:16",
+      "      [A.4] y_p vs y_b differ max=9.3782, using physio y"
+    ],
+    [
+      "2026-05-13 02:11:20",
+      "      [A.4] y_p vs y_b differ max=13.0036, using physio y"
+    ]
+  ],
+  "anomalies": [],
+  "total_elapsed_s": 3592.893070459366
+}
