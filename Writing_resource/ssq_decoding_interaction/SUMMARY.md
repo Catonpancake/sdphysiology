@@ -112,3 +112,85 @@
 | `09_continuous_lmm_lrt.csv` | LRT M3 vs M1 (SSQ main), M4 vs M3 (interaction) |
 | `10_continuous_lmm_interaction_coefs.csv` | M4 fixed-effect coefficients (scene × SSQ terms) |
 | `11_pre_post_wilcoxon.csv` | Pre vs Post paired test statistics |
+
+---
+
+# Update 2026-05-16 — Handoff #4 (subscale-level analysis)
+
+Kennedy 1993 weighted subscale scoring (N / O / D) added. Both Pre and Post computed for all 106 PIDs.
+
+## #4.1 Kennedy subscale descriptives (Post)
+
+| Subscale | weight | mean ± SD | median | range |
+|---|---|---|---|---|
+| N (Nausea) | ×9.54 | 25.02 ± 33.91 | 9.54 | [0.0, 143.1] |
+| O (Oculomotor) | ×7.58 | 27.60 ± 26.51 | 22.74 | [0.0, 121.3] |
+| D (Disorientation) | ×13.92 | 26.26 ± 39.29 | 13.92 | [0.0, 208.8] |
+
+Kennedy TS:  mean ± SD = 30.48 ± 34.47
+Simple TS:   mean ± SD = 23.15 ± 25.72
+Pearson r(Kennedy_TS, simple_TS) = 0.9968, p = 0.44 — both metrics nearly redundant; existing pipeline's simple-TS is a safe proxy for the Kennedy total.
+
+## #4.2 Per-subscale moderator tests on decoding metrics
+
+For each subscale (N, O, D) × Post weighted score + Δ subscale, Spearman ρ with each per-PID decoding metric. BH-FDR within (subscale × task × test) family.
+
+**Total tests: 192, significant after FDR: 2.**
+
+### Significant tests
+
+| subscale | task | model | condition | test | effect | p_raw | p_FDR |
+|---|---|---|---|---|---|---|---|
+| D | T3-A_AR | RF_behavior_only_9ch | full_beh | Spearman_vs_Post_subscale_weighted | +0.199 | 0.0411 | 0.0411 |
+| D | T3-A_AR | RF_behavior_only_9ch | full_beh | Spearman_vs_Delta_subscale_weighted | +0.277 | 0.004 | 0.004 |
+
+### Strongest trends per subscale (top 3 lowest p_raw, may not be FDR-sig)
+
+**N (Nausea)**
+
+| task | model | condition | test | effect | p_raw | p_FDR | sig |
+|---|---|---|---|---|---|---|---|
+| T3-A | XGB | NoAR+Physio | Spearman_vs_Delta_subscale_weighted | +0.254 | 0.00848 | 0.119 |  |
+| T3-A | XGB | NoAR+Physio | Spearman_vs_Post_subscale_weighted | +0.250 | 0.00983 | 0.138 |  |
+| T3-A | XGB | NoAR+Beh | Spearman_vs_Delta_subscale_weighted | +0.219 | 0.0242 | 0.17 |  |
+
+**O (Oculomotor)**
+
+| task | model | condition | test | effect | p_raw | p_FDR | sig |
+|---|---|---|---|---|---|---|---|
+| T3-A | XGB | NoAR+Physio | Spearman_vs_Post_subscale_weighted | +0.218 | 0.025 | 0.209 |  |
+| T2-A | Raw_RF | physio | Spearman_vs_Post_subscale_weighted | +0.215 | 0.0319 | 0.319 |  |
+| T3-A | RF | NoAR+Physio | Spearman_vs_Post_subscale_weighted | +0.188 | 0.0534 | 0.209 |  |
+
+**D (Disorientation)**
+
+| task | model | condition | test | effect | p_raw | p_FDR | sig |
+|---|---|---|---|---|---|---|---|
+| T3-A_AR | RF_behavior_only_9ch | full_beh | Spearman_vs_Delta_subscale_weighted | +0.277 | 0.004 | 0.004 | ✅ |
+| T3-A | XGB | AR_only | Spearman_vs_Delta_subscale_weighted | +0.260 | 0.00709 | 0.0993 |  |
+| T3-A | XGB | NoAR+Beh | Spearman_vs_Delta_subscale_weighted | +0.216 | 0.0261 | 0.11 |  |
+
+## #4.3 Per-subscale LMM on per-PID per-scene anxiety
+
+Same per-PID per-scene anxiety mean (raw 60 Hz frames) as §7.2; subscale_z replaces the simple-TS as continuous moderator.
+
+| Subscale | main coef (per SD) | p (main, Wald-z) | LRT add subscale: p | ΔAIC | LRT interaction: p | ΔAIC |
+|---|---|---|---|---|---|---|
+| N | +0.433 | 0.000828 | 0.00111 | -8.63 | 0.466 | +4.42 |
+| O | +0.449 | 0.000497 | 0.000702 | -9.48 | 0.662 | +5.60 |
+| D | +0.346 | 0.00863 | 0.00974 | -4.68 | 0.165 | +1.51 |
+
+### Interpretation
+
+- Strongest subscale main effect: **O** (β = +0.449 anxiety units per +1 SD, p = 0.000497, ΔAIC vs scene-only = -9.48)
+- 3/3 subscales show a significant main effect on per-PID per-scene anxiety after controlling for scene.
+- **No scene × subscale interactions significant** (consistent with §7.2: SSQ acts as a parallel-line moderator regardless of which subscale is used).
+
+### Files added by #4
+
+| File | Description |
+|---|---|
+| `run_ssq_subscale_analysis.py` | This script (#4) |
+| `12_subscale_scores_per_pid.csv` | Per-PID Pre/Post N/O/D weighted + Kennedy TS + Δ |
+| `13_subscale_decoding_tests.csv` | Subscale × decoding metric univariate tests |
+| `14_subscale_lmm.csv` | One LMM per subscale (main effect, LRT, interaction) |
