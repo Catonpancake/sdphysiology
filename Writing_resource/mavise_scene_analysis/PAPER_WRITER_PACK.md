@@ -208,17 +208,40 @@ Test R² on 9 held-out PIDs. Bold = best per scene.
 XGB outperforms every DL model on every scene. Among DL, GRU-Attn is best on
 Hallway/Elevator/Outside; GRU is best on Hall. (`phase_B_10seed/SUMMARY.md`)
 
-### 5.3 Modality ablation (XGB, HV, per-scene)
+### 5.3a Modality ablation (XGB, HV, per-scene)
+
+Drop one modality at a time. All variants use `mean+std` pooling.
 
 | Modality | Hallway | Hall | Elevator | Outside |
 |---|---|---|---|---|
-| REF — Full (67 ch) | +0.511 | +0.192 | +0.059 | +0.014 |
-| D1 — Physio-only (11 ch) | +0.191 | −0.001 | +0.021 | +0.001 |
-| D1 — **Behavior-only (56 ch)** | **+0.514** | **+0.206** | +0.045 | +0.014 |
-| D2 — Full + linear slope (134+67 ch) | +0.537 | +0.125 | +0.060 | +0.013 |
+| REF — Full (67 ch = 11 physio + 56 behavior) | +0.511 | +0.192 | +0.059 | +0.014 |
+| Physio-only (11 ch) | +0.191 | −0.001 | +0.021 | +0.001 |
+| **Behavior-only (56 ch)** | **+0.514** | **+0.206** | +0.045 | +0.014 |
 
 Behavior alone ≥ Full; Physio-only collapses to near-zero except in Hallway.
-Adding linear-slope features helps Hallway only. (`mavise_directions.csv`)
+This is the primary ablation for the paper's narrative about
+*avoidance-behavior-as-anxiety-signal*. (`mavise_directions.csv`, rows
+`dir ∈ {REF, D1_physio, D1_beh}`)
+
+### 5.3b Temporal-pooling ablation (XGB, HV, per-scene)
+
+Same 67-channel input; vary how the 5 s time series is collapsed to a feature
+vector for classical models. NOT a modality test — both rows use all channels.
+
+| Pooling | Hallway | Hall | Elevator | Outside |
+|---|---|---|---|---|
+| `mean + std`  (2 stats × 67 ch = 134 features) — REF | +0.511 | +0.192 | +0.059 | +0.014 |
+| `mean + std + slope`  (3 stats × 67 ch = 201 features) — D2_slope | +0.537 | +0.125 | +0.060 | +0.013 |
+
+`slope` = ordinary-least-squares regression slope of each channel within the
+5 s window (units per second). Captures within-window trend in addition to
+level (`mean`) and dispersion (`std`).
+
+**Verdict — explored, no consistent gain.** Adding the slope statistic
+improves Hallway slightly (+0.026 R²) but *worsens* Hall (−0.067) and is
+flat elsewhere. We retain `mean+std` as the default pooling and report the
+slope variant here only for transparency.
+(`mavise_directions.csv`, rows `dir ∈ {REF, D2_slope}`)
 
 ### 5.4 Three-factor mechanism (Phase-2 analysis)
 
