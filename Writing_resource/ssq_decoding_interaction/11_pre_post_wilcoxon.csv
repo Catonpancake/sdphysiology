@@ -1,0 +1,2 @@
+n_paired,pre_mean,pre_std,post_mean,post_std,delta_mean,delta_std,delta_median,n_increase,n_decrease,n_tied,cohens_dz,rank_biserial_r,wilcoxon_W,p_wilcoxon_two_sided,p_wilcoxon_one_sided_post_gt_pre,t_stat_paired_t,p_paired_t
+106,11.572830188679246,12.868336389664213,23.145660377358496,25.721139833251033,11.572830188679246,23.305065247697996,3.74,62,25,19,0.4965800381023338,0.6094566353187043,747.5,7.378090618421862e-07,3.689045309210931e-07,5.112604407698861,1.43573884632707e-06

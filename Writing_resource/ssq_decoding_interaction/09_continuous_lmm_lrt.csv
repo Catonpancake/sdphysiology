@@ -1,0 +1,3 @@
+comparison,delta_logL,delta_df,p,delta_AIC
+M3_scene+SSQ vs M1_scene (adds SSQ main effect),11.16144141739096,1,0.000835150096470838,-9.16144141739096
+M4_scene×SSQ vs M3_scene+SSQ (adds interaction),2.7782528573497984,4,0.5955924583286714,5.221747142650202
