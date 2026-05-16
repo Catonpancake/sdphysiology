@@ -1,0 +1,2 @@
+test,n_pids,k_scenes,F,df_num,df_den,p_uncorrected,gg_epsilon,df_num_gg,df_den_gg,p_greenhouse_geisser,friedman_chi2,friedman_p
+"RM-ANOVA (5 scenes, within-PID)",104,5,40.429051975642174,4.0,412.0,1.407859193355041e-28,0.2567630718692232,1.0270522874768928,105.78638561011996,3.76166642279685e-09,78.28461538461556,4.020815040209622e-16

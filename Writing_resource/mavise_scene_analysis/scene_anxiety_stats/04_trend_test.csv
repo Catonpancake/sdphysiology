@@ -1,0 +1,4 @@
+test,L_statistic,p_value
+"Page L (H1: ascending with protocol order, i.e. anxiety RISES)",4533.0,0.9980298824072568
+"Page L (H1: descending with protocol order, i.e. anxiety FALLS - fatigue)",4827.0,0.0019701175927432217
+"Spearman rho(protocol_order, per_scene_mean) (descriptive, n=5)",-0.39999999999999997,0.5046315754686911
